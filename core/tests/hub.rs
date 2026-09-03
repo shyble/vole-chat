@@ -16,8 +16,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use rust_lib_vole_chat::message::now_ms;
 use rust_lib_vole_chat::{Event, HubClient, Identity, Outbox, Verdict};
 
-const HUB_PORT: u16 = 19995;
-const MEMBER_PORT: u16 = 19996;
+// Tests in a file run in parallel, so each takes its own pair of ports.
+const PORTS_MAIN: (u16, u16) = (19995, 19996);
+const PORTS_REQUEST: (u16, u16) = (19993, 19994);
 
 struct Harness {
 	child: Child,
@@ -29,14 +30,14 @@ struct Harness {
 }
 
 impl Harness {
-	fn spawn(dir: &Path) -> Harness {
+	fn spawn(dir: &Path, ports: (u16, u16)) -> Harness {
 		let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
 		let tsx: PathBuf = root.join("harness/node_modules/.bin/tsx");
 		assert!(tsx.exists(), "run `pnpm install` in harness/ first");
 		let mut child = Command::new(tsx)
 			.arg(root.join("harness/hub.ts"))
-			.arg(HUB_PORT.to_string())
-			.arg(MEMBER_PORT.to_string())
+			.arg(ports.0.to_string())
+			.arg(ports.1.to_string())
 			.arg(dir)
 			.current_dir(root.join("harness"))
 			.stdin(Stdio::piped())
@@ -108,7 +109,7 @@ async fn wait_event(rx: &mut UnboundedReceiver<Event>, secs: u64, pred: impl Fn(
 #[tokio::test(flavor = "multi_thread")]
 async fn a_phone_on_a_real_hub() {
 	let tmp = tempfile::tempdir().unwrap();
-	let mut h = Harness::spawn(tmp.path());
+	let mut h = Harness::spawn(tmp.path(), PORTS_MAIN);
 	let me = Arc::new(Identity::generate("rusty"));
 
 	// ── §4 join: the hub trusts us and we pin its key ──
@@ -189,5 +190,56 @@ async fn a_phone_on_a_real_hub() {
 	assert!(matches!(ev, Event::Chat { .. }));
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	assert!(client.pending().iter().all(|n| n.from != member_id), "notice cleared by the message: {:?}", client.pending());
+	client.close().await;
+}
+
+/// The case a phone actually hits: an agent asks to connect while the phone is closed.
+///
+/// Before openvole 4.20.0 the request was sealed, handed to the hub and forgotten, so it
+/// reached nobody and nobody was told. It must now wait on the agent and arrive when the phone
+/// is back — which is also what proves the app's background-close is worth doing, since the
+/// hub only holds once it knows the member is gone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_sent_while_the_phone_is_closed_arrives_when_it_reopens() {
+	let tmp = tempfile::tempdir().unwrap();
+	let mut h = Harness::spawn(tmp.path(), PORTS_REQUEST);
+	let me = Arc::new(Identity::generate("pocket"));
+	let info = HubClient::join(&h.hub_url, &me).await.expect("join");
+	let member_id = h.member_id.clone();
+
+	// Be seen, then close the way the app does when the screen locks.
+	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), []).await.expect("connect");
+	wait_event(&mut rx, 20, |e| matches!(e, Event::Roster(m) if m.iter().any(|x| x.instance_id == member_id && x.connected))).await;
+	client.close().await;
+	drop(client);
+
+	// The hub notices at once, because we closed rather than vanished.
+	let me_id = me.instance_id().to_string();
+	h.cmd(json!({"cmd": "connect", "to": me_id, "note": "it's your orchestrator"}));
+	let res = h.wait_ev("connect-result", 20);
+	assert_eq!(res["ok"], json!(true), "{res}");
+	assert_eq!(res["queued"], json!(true), "the agent held it rather than losing it: {res}");
+	h.cmd(json!({"cmd": "outbox"}));
+	let ob = h.wait_ev("outbox", 10);
+	let held = ob["outbox"].as_array().unwrap();
+	assert_eq!(held.len(), 1, "{ob}");
+	assert_eq!(held[0]["kind"], json!("connect-request"));
+	assert_eq!(held[0]["note"], json!("it's your orchestrator"));
+
+	// Reopen the app: the request is delivered and surfaces for the user to accept.
+	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), []).await.expect("reconnect");
+	let ev = wait_event(&mut rx, 40, |e| matches!(e, Event::ConnectRequest { .. })).await;
+	assert!(
+		matches!(&ev, Event::ConnectRequest { from, from_name, note }
+			if from == &member_id && from_name == "peer-b" && note.as_deref() == Some("it's your orchestrator")),
+		"{ev:?}"
+	);
+
+	// Accepting tells them, and the agent's outbox is empty again.
+	client.accept(&member_id);
+	assert_ne!(client.approve(&member_id).await, Verdict::Refused("not connected".into()));
+	h.cmd(json!({"cmd": "outbox"}));
+	let ob = h.wait_ev("outbox", 10);
+	assert!(ob["outbox"].as_array().unwrap().is_empty(), "delivered, so nothing still waits: {ob}");
 	client.close().await;
 }
