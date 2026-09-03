@@ -13,6 +13,7 @@
 //! - [`client`]    a hub session: join, announce, roster, relayed chat, consent, notices (§4–§7)
 //! - [`outbox`]    what waits for someone who is away, and when it goes (§7, §8)
 
+pub mod api;
 pub mod canonical;
 pub mod client;
 pub mod der;
@@ -20,6 +21,8 @@ pub mod keys;
 pub mod message;
 pub mod outbox;
 pub mod seal;
+#[allow(clippy::all, unused_imports, unused_variables, dead_code)]
+mod frb_generated;
 
 pub use client::{Event, HubClient, JoinInfo, Member, Notice, Verdict};
 pub use keys::{Identity, PeerKeys};

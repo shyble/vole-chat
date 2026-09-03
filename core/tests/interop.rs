@@ -8,10 +8,10 @@
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use volenet::keys::parse_key_string;
-use volenet::message::{now_ms, Message};
-use volenet::seal::{seal, unseal, SealedBox};
-use volenet::Identity;
+use rust_lib_vole_chat::keys::parse_key_string;
+use rust_lib_vole_chat::message::{now_ms, Message};
+use rust_lib_vole_chat::seal::{seal, unseal, SealedBox};
+use rust_lib_vole_chat::Identity;
 
 fn repo_root() -> PathBuf {
 	Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
@@ -71,8 +71,8 @@ fn rust_reads_a_core_identity_exactly_as_core_does() {
 	assert_eq!(peer.name, "core-node");
 	assert!(peer.mldsa.is_some(), "core on Node 24+ emits a hybrid key string");
 	assert!(!ts.mlkem_public.is_empty(), "core on Node 24+ announces an ML-KEM key");
-	volenet::keys::parse_x25519_public_b64(&ts.x_public).expect("core's X25519 SPKI parses");
-	volenet::keys::parse_mlkem_public_b64(&ts.mlkem_public).expect("core's ML-KEM SPKI parses");
+	rust_lib_vole_chat::keys::parse_x25519_public_b64(&ts.x_public).expect("core's X25519 SPKI parses");
+	rust_lib_vole_chat::keys::parse_mlkem_public_b64(&ts.mlkem_public).expect("core's ML-KEM SPKI parses");
 }
 
 #[test]

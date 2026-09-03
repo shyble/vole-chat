@@ -34,6 +34,15 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  rust_lib_vole_chat:
+    path: rust_builder
+  flutter_rust_bridge: 2.13.0
+  freezed_annotation: ^3.1.0
+  flutter_secure_storage: ^9.2.4
+  shared_preferences: ^2.5.5
+  path_provider: ^2.1.6
+  qr_flutter: ^4.1.0
+  intl: ^0.20.3
 
 dev_dependencies:
   flutter_test:
@@ -45,6 +54,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  freezed: ^3.2.5
+  build_runner: ^2.15.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -87,3 +98,8 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# path_provider_foundation 2.6 pulls objective_c, whose native build hook breaks
+# build_runner (which the bridge codegen needs for freezed). 2.5.1 is the last without it.
+dependency_overrides:
+  path_provider_foundation: 2.5.1

@@ -13,8 +13,8 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedReceiver;
-use volenet::message::now_ms;
-use volenet::{Event, HubClient, Identity, Outbox, Verdict};
+use rust_lib_vole_chat::message::now_ms;
+use rust_lib_vole_chat::{Event, HubClient, Identity, Outbox, Verdict};
 
 const HUB_PORT: u16 = 19995;
 const MEMBER_PORT: u16 = 19996;
@@ -154,7 +154,7 @@ async fn a_phone_on_a_real_hub() {
 	outbox.add(&member_id, "peer-b", "while you were out", written);
 	assert_eq!(outbox.len(), 1);
 	// Flushing while they are still away does nothing (they are not connected in the roster).
-	let r = outbox.flush(&client, now_ms(), volenet::outbox::DEFAULT_TTL_MS).await;
+	let r = outbox.flush(&client, now_ms(), rust_lib_vole_chat::outbox::DEFAULT_TTL_MS).await;
 	assert!(r.is_empty(), "{r:?}");
 	assert_eq!(outbox.len(), 1);
 
@@ -162,8 +162,8 @@ async fn a_phone_on_a_real_hub() {
 	h.cmd(json!({"cmd": "start-member"}));
 	h.wait_ev("member-started", 30);
 	wait_event(&mut rx, 60, |e| matches!(e, Event::Roster(m) if m.iter().any(|x| x.instance_id == member_id && x.connected))).await;
-	let r = outbox.flush(&client, now_ms(), volenet::outbox::DEFAULT_TTL_MS).await;
-	assert!(matches!(r.as_slice(), [volenet::outbox::Flushed::Delivered { .. }]), "{r:?}");
+	let r = outbox.flush(&client, now_ms(), rust_lib_vole_chat::outbox::DEFAULT_TTL_MS).await;
+	assert!(matches!(r.as_slice(), [rust_lib_vole_chat::outbox::Flushed::Delivered { .. }]), "{r:?}");
 	assert!(outbox.is_empty());
 	let got = h.wait_where(20, |v| v["ev"] == "volenet:chat" && v["text"] == "while you were out");
 	assert_eq!(got["timestamp"], json!(written), "the recipient records when it was written");
