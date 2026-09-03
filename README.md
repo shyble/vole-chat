@@ -21,20 +21,26 @@ Flutter UI on both stores, Rust protocol core underneath. Both are here.
 - **Rust for the protocol, not Dart.** ML-KEM-768 and ML-DSA-65 have audited Rust implementations and no mature pure-Dart ones. Bridged with `flutter_rust_bridge`.
 - **Seeds, not PKCS8.** Every keypair regenerates from 160 bytes of seed, which is what a backup QR holds.
 
-## Building
+## Building and testing
 
 ```bash
-# Rust core + interop tests (OpenVole must be at ../openvole, Node 24+ with OpenSSL 3.5)
+# Rust core: unit tests, interop with OpenVole's TypeScript, and a client against a real hub
+# (OpenVole must be at ../openvole, Node 24+ with OpenSSL 3.5)
 cd harness && pnpm install && cd ..
 cd core && cargo test
 
-# Flutter app
-cd app && flutter run
+# The Dart side of the bridge against a real hub, using the same native library the app ships
+cd core && cargo build && cd ../app && flutter test test/bridge_test.dart
+
+# The app (macOS today; iOS and Android once their toolchains are present)
+cd app && flutter run -d macos
 ```
+
+The bridge's Dart bindings are generated: after changing `core/src/api/`, run `flutter_rust_bridge_codegen generate` in `app/`.
 
 ## Status
 
 - [x] Identity, canonical signing, sealed envelopes — interoperating with OpenVole core
 - [x] Hub client: join, announce, roster, relay, consent, outbox, notices — tested against a real hub and member (`core/tests/hub.rs`)
-- [ ] Flutter app over the bridge: onboarding, hubs, contacts, chat, key backup
-- [ ] Store builds
+- [x] Flutter app over the bridge: onboarding, hubs, chats (consent, held messages, notices), key backup — macOS build and a Dart-side hub test pass (`app/test/bridge_test.dart`)
+- [ ] Store builds (iOS: needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`, then `flutter build ios`; Android: needs the Android SDK and NDK installed, then `flutter build apk`)

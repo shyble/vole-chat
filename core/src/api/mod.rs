@@ -157,6 +157,9 @@ fn session_event(e: Event) -> SessionEvent {
 pub struct Session {
 	client: HubClient,
 	rx: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Event>>>,
+	/// The runtime the session lives on. `events` is a synchronous bridge call and runs on the
+	/// bridge's own thread pool, outside any runtime, so it spawns through this handle.
+	runtime: tokio::runtime::Handle,
 }
 
 /// Announce, bind the socket, and start the session. `consents` are members whose chat is
@@ -170,14 +173,14 @@ pub async fn session_connect(
 ) -> anyhow::Result<Session> {
 	let me = Arc::new(identity_from(&name, &seeds_b64)?);
 	let (client, rx) = HubClient::connect(&url, &hub_key_string, me, consents).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-	Ok(Session { client, rx: std::sync::Mutex::new(Some(rx)) })
+	Ok(Session { client, rx: std::sync::Mutex::new(Some(rx)), runtime: tokio::runtime::Handle::current() })
 }
 
 impl Session {
 	/// The session's events, as a stream. Only the first call receives them.
 	pub fn events(&self, sink: StreamSink<SessionEvent>) {
 		let Some(mut rx) = self.rx.lock().unwrap().take() else { return };
-		tokio::spawn(async move {
+		self.runtime.spawn(async move {
 			while let Some(e) = rx.recv().await {
 				if sink.add(session_event(e)).is_err() {
 					break;

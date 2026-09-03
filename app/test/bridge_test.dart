@@ -1,0 +1,158 @@
+// The Dart side of the bridge against a real OpenVole hub and member, on this machine.
+//
+//   cd core && cargo build            # produces the host dylib the test loads
+//   cd app  && flutter test test/bridge_test.dart
+//
+// Runs on the host VM (not inside the sandboxed app), so it can spawn harness/hub.ts — OpenVole
+// checked out beside this repo, harness deps installed — and drive the generated API through
+// the same native library the app ships with: create an identity, join, connect, read the
+// roster, chat both ways. If this passes, the app can talk to a hub.
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:vole_chat/src/rust/api.dart';
+import 'package:vole_chat/src/rust/frb_generated.dart';
+
+const hubPort = 19997;
+const memberPort = 19998;
+
+/// The repo root: walk up from wherever the test runner put us until core/Cargo.toml appears.
+String repoRoot() {
+  var d = Directory.current;
+  while (true) {
+    if (File('${d.path}/core/Cargo.toml').existsSync()) return d.path;
+    if (d.parent.path == d.path) throw StateError('repo root not found from ${Directory.current.path}');
+    d = d.parent;
+  }
+}
+
+/// Subscribes immediately and keeps everything, so a waiter that arrives late still sees it.
+class Replay<T> {
+  Replay(Stream<T> source) {
+    source.listen(_items.add);
+  }
+  final List<T> _items = [];
+
+  Future<T> firstWhere(bool Function(T) pred, Duration within) async {
+    final deadline = DateTime.now().add(within);
+    var seen = 0;
+    while (true) {
+      for (; seen < _items.length; seen++) {
+        if (pred(_items[seen])) return _items[seen];
+      }
+      if (DateTime.now().isAfter(deadline)) throw TimeoutException('nothing matched within $within', within);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+}
+
+class Harness {
+  Harness(this.proc, this.lines);
+  final Process proc;
+  final Replay<Map<String, dynamic>> lines;
+  late Map<String, dynamic> ready;
+
+  static Future<Harness> spawn() async {
+    final repo = repoRoot();
+    final tmp = await Directory.systemTemp.createTemp('vole-chat-bridge-');
+    final proc = await Process.start(
+      '$repo/harness/node_modules/.bin/tsx',
+      ['$repo/harness/hub.ts', '$hubPort', '$memberPort', tmp.path],
+      workingDirectory: '$repo/harness',
+    );
+    proc.stderr.transform(utf8.decoder).listen((_) {});
+    final lines = Replay(proc.stdout.transform(utf8.decoder).transform(const LineSplitter()).map((l) {
+      try {
+        return jsonDecode(l) as Map<String, dynamic>;
+      } catch (_) {
+        return <String, dynamic>{};
+      }
+    }));
+    final h = Harness(proc, lines);
+    h.ready = await h.wait((v) => v['ev'] == 'ready', const Duration(seconds: 40));
+    return h;
+  }
+
+  void cmd(Map<String, dynamic> c) => proc.stdin.writeln(jsonEncode(c));
+
+  Future<Map<String, dynamic>> wait(bool Function(Map<String, dynamic>) pred, Duration within) =>
+      lines.firstWhere(pred, within);
+
+  Future<void> stop() async {
+    cmd({'cmd': 'exit'});
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    proc.kill();
+  }
+}
+
+void main() {
+  setUpAll(() async {
+    final repo = repoRoot();
+    final dylib = '$repo/core/target/debug/librust_lib_vole_chat.dylib';
+    final dbg = Directory('$repo/core/target/debug');
+    expect(File(dylib).existsSync(), isTrue,
+        reason: 'cwd=${Directory.current.path} repo=$repo dylib=$dylib '
+            'debugDir=${dbg.existsSync() ? dbg.listSync().map((e) => e.uri.pathSegments.last).where((n) => n.contains('vole')).join(',') : 'missing'} '
+            '— build the core first: cd core && cargo build');
+    await RustLib.init(externalLibrary: ExternalLibrary.open(dylib));
+  });
+
+  test('a phone on a real hub, through the bridge', () async {
+    final h = await Harness.spawn();
+    try {
+      final hubUrl = h.ready['hubUrl'] as String;
+      final memberId = h.ready['memberId'] as String;
+
+      // identity + join + pin
+      final me = identityCreate(name: 'flutter-phone');
+      expect(identityRestore(name: 'flutter-phone', seedsB64: me.seedsB64).instanceId, me.instanceId);
+      expect(keyStringParse(keyString: me.keyString).postQuantum, isTrue);
+      final join = await hubJoin(url: hubUrl, name: me.name, seedsB64: me.seedsB64);
+      expect(join.pending, isFalse);
+      expect(join.hubKeyString, h.ready['hubKey']);
+
+      // connect, events, roster
+      final session = await sessionConnect(
+        url: hubUrl,
+        hubKeyString: join.hubKeyString,
+        name: me.name,
+        seedsB64: me.seedsB64,
+        consents: [memberId],
+      );
+      final events = Replay(session.events());
+      await events.firstWhere((e) => e is SessionEvent_Connected, const Duration(seconds: 10));
+      await events.firstWhere(
+          (e) => e is SessionEvent_Roster && e.members.any((m) => m.instanceId == memberId && m.connected),
+          const Duration(seconds: 20));
+      final peer = session.roster().firstWhere((m) => m.instanceId == memberId);
+      expect(peer.name, 'peer-b');
+      expect(peer.reachable, isTrue);
+
+      // us → them
+      final v = await session.sendChat(to: memberId, text: 'hello from flutter');
+      expect(v, isA<SendVerdict_Delivered>());
+      final got = await h.wait(
+          (x) => x['ev'] == 'volenet:chat' && x['text'] == 'hello from flutter', const Duration(seconds: 15));
+      expect(got['fromName'], 'flutter-phone');
+
+      // them → us
+      h.cmd({'cmd': 'send', 'to': me.instanceId, 'text': 'hi flutter'});
+      final chat = await events.firstWhere((e) => e is SessionEvent_Chat, const Duration(seconds: 15)) as SessionEvent_Chat;
+      expect(chat.from, memberId);
+      expect(chat.fromName, 'peer-b');
+      expect(chat.text, 'hi flutter');
+
+      // outbox helpers round-trip through the bridge
+      final add = outboxAdd(outboxJson: '{"entries":[]}', to: memberId, toName: 'peer-b', text: 'later', sentAt: 1);
+      expect(outboxList(outboxJson: add.outboxJson).single.ref, add.ref);
+      expect(outboxList(outboxJson: outboxRemove(outboxJson: add.outboxJson, ref: add.ref)), isEmpty);
+
+      await session.close();
+    } finally {
+      await h.stop();
+    }
+  });
+}
