@@ -107,6 +107,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CallerOut dco_decode_caller_out(dynamic raw);
 
   @protected
+  CardOut dco_decode_card_out(dynamic raw);
+
+  @protected
   FlushOutcome dco_decode_flush_outcome(dynamic raw);
 
   @protected
@@ -263,6 +266,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CallerOut sse_decode_caller_out(SseDeserializer deserializer);
+
+  @protected
+  CardOut sse_decode_card_out(SseDeserializer deserializer);
 
   @protected
   FlushOutcome sse_decode_flush_outcome(SseDeserializer deserializer);
@@ -442,6 +448,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_caller_out(CallerOut self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_card_out(CardOut self, SseSerializer serializer);
 
   @protected
   void sse_encode_flush_outcome(FlushOutcome self, SseSerializer serializer);

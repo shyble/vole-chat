@@ -4,7 +4,7 @@
 
 use crate::frb_generated::StreamSink;
 use crate::keys::Seeds;
-use crate::{DirectClient, Event, HubClient, Identity, Listener, Outbox, Verdict};
+use crate::{ContactCard, DirectClient, Event, HubClient, Identity, Listener, Outbox, Verdict};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use flutter_rust_bridge::frb;
 use std::sync::Arc;
@@ -170,9 +170,14 @@ pub async fn session_connect(
 	name: String,
 	seeds_b64: String,
 	consents: Vec<String>,
+	// Scanned cards, as their QR text: their keys are pinned over anything the hub claims.
+	cards: Vec<String>,
 ) -> anyhow::Result<Session> {
 	let me = Arc::new(identity_from(&name, &seeds_b64)?);
-	let (client, rx) = HubClient::connect(&url, &hub_key_string, me, consents).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+	let pinned: Vec<ContactCard> = cards.iter().filter_map(|c| ContactCard::decode(c).ok()).collect();
+	let (client, rx) = HubClient::connect(&url, &hub_key_string, me, consents, pinned)
+		.await
+		.map_err(|e| anyhow::anyhow!("{e}"))?;
 	Ok(Session { client, rx: std::sync::Mutex::new(Some(rx)), runtime: tokio::runtime::Handle::current() })
 }
 
@@ -526,4 +531,42 @@ impl Reachable {
 	pub fn stop(&self) {
 		self.listener.stop()
 	}
+}
+
+// ── Identity cards (connect by who someone is, not where they are) ────────
+
+pub struct CardOut {
+	/// The QR text. Hand this to someone, or scan theirs.
+	pub text: String,
+	pub instance_id: String,
+	pub name: String,
+	/// Commits to every key, so a hub can neither read nor impersonate. False for an
+	/// identity-only code, which pins who they are but not what they seal with.
+	pub seals: bool,
+	/// A hub the card names, if any.
+	pub hub: Option<String>,
+}
+
+fn card_out(c: &ContactCard) -> anyhow::Result<CardOut> {
+	Ok(CardOut {
+		text: c.encode(),
+		instance_id: c.instance_id(),
+		name: c.name.clone(),
+		seals: c.seals(),
+		hub: c.hub.clone(),
+	})
+}
+
+/// My own card, to show as a QR. Naming a hub makes it enough on its own.
+#[frb(sync)]
+pub fn card_mine(name: String, seeds_b64: String, hub: Option<String>) -> anyhow::Result<CardOut> {
+	let me = identity_from(&name, &seeds_b64)?;
+	card_out(&ContactCard::mine(&me, hub.as_deref()))
+}
+
+/// Read a scanned card. Accepts a bare key string too, which pins less.
+#[frb(sync)]
+pub fn card_read(text: String) -> anyhow::Result<CardOut> {
+	let c = ContactCard::decode(&text).map_err(|e| anyhow::anyhow!("{e}"))?;
+	card_out(&c)
 }

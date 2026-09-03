@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../app_state.dart';
+import 'scan.dart';
 
 /// Your identity: who you are to others, and the one thing to back up.
 class SettingsPage extends StatelessWidget {
@@ -13,6 +14,7 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = state;
     final me = s.identity!;
+    final card = s.myCard();
     final t = Theme.of(context).textTheme;
     return AnimatedBuilder(
       animation: s,
@@ -23,11 +25,37 @@ class SettingsPage extends StatelessWidget {
           Text(me.instanceId, style: t.bodySmall),
           const SizedBox(height: 20),
           _Section(
-            title: 'Your key',
-            body: 'What another node pins to trust you directly. Safe to share.',
-            qr: me.keyString,
-            copyLabel: 'Copy key',
-            copyValue: me.keyString,
+            title: 'Your code',
+            body: card?.seals == true
+                ? 'Show this to someone and they can reach you by who you are, wherever either of you is. '
+                    'It carries all four of your public keys${card?.hub != null ? ' and your hub' : ''}, so once they scan it no hub can '
+                    'read your messages or pass anyone else off as you.'
+                : 'What another node pins to trust you. Safe to share.',
+            qr: card?.text ?? me.keyString,
+            copyLabel: 'Copy code',
+            copyValue: card?.text ?? me.keyString,
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () async {
+              final text = await Navigator.of(context).push<String>(
+                MaterialPageRoute(builder: (_) => const ScanPage()),
+              );
+              if (text == null || !context.mounted) return;
+              try {
+                final note = await s.addCard(text);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(note)));
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(SnackBar(content: Text('Not a vole-chat code: $e')));
+                }
+              }
+            },
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text("Scan someone's code"),
           ),
           const SizedBox(height: 20),
           _Section(
@@ -40,6 +68,28 @@ class SettingsPage extends StatelessWidget {
             danger: true,
           ),
           const SizedBox(height: 20),
+          if (s.cards.isNotEmpty) ...[
+            Text('Codes you scanned', style: t.titleMedium),
+            const SizedBox(height: 6),
+            Text(
+              'Their keys are pinned here, so a hub carrying your messages cannot read them or '
+              'pass anyone else off as them.',
+              style: t.bodySmall,
+            ),
+            for (final id in s.cards.keys)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.verified_user_outlined),
+                title: Text(s.contacts[id]?.name.isNotEmpty == true ? s.contacts[id]!.name : id),
+                subtitle: Text(id, style: t.bodySmall),
+                trailing: IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Forget this code',
+                  onPressed: () => s.forgetCard(id),
+                ),
+              ),
+            const SizedBox(height: 20),
+          ],
           Text('People who may message you', style: t.titleMedium),
           const SizedBox(height: 6),
           if (s.consents.isEmpty)

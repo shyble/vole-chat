@@ -42,6 +42,13 @@ class Store {
   Future<void> writeNodes(List<Map<String, dynamic>> nodes) =>
       _secure.write(key: 'nodes', value: jsonEncode({'list': nodes}));
 
+  /// Cards people handed us, as their QR text — their keys, pinned by us.
+  Future<List<String>> readCards() async =>
+      ((await _readJsonSecure('cards') ?? const {})['list'] as List<dynamic>? ?? const [])
+          .cast<String>();
+  Future<void> writeCards(List<String> cards) =>
+      _secure.write(key: 'cards', value: jsonEncode({'list': cards}));
+
   /// Key strings of callers we accepted, so they stay trusted across restarts.
   Future<List<String>> readCallers() async =>
       ((await _readJsonSecure('callers') ?? const {})['list'] as List<dynamic>? ?? const [])

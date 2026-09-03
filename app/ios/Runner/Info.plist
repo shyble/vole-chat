@@ -47,5 +47,7 @@
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>vole-chat connects directly to people and agents on this network, so your messages never leave it.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>vole-chat uses the camera only to scan someone's code, so you can add them by who they are rather than by an address.</string>
 </dict>
 </plist>

@@ -177,6 +177,8 @@ class AppState extends ChangeNotifier {
   String? nearbyUrl;
   String? nearbyError;
   final Set<String> callerKeys = {};
+  /// Cards we scanned, by instance id — their keys pinned by us, not vouched by a hub.
+  final Map<String, String> cards = {};
 
   final Map<String, rust.NodeSession> _nodeSessions = {};
   final Map<String, StreamSubscription<rust.SessionEvent>> _nodeEvents = {};
@@ -216,6 +218,13 @@ class AppState extends ChangeNotifier {
     }
     outboxJson = await store.readOutbox();
     callerKeys.addAll(await store.readCallers());
+    for (final text in await store.readCards()) {
+      try {
+        cards[rust.cardRead(text: text).instanceId] = text;
+      } catch (_) {
+        // not a card any more — drop it rather than fail the whole load
+      }
+    }
     nearby = store.nearby;
     notifyListeners();
     if (identity != null) connectAll();
@@ -311,6 +320,7 @@ class AppState extends ChangeNotifier {
         name: me.name,
         seedsB64: me.seedsB64,
         consents: consents.toList(),
+        cards: cards.values.toList(),
       );
       _session = s;
       _events = s.events().listen(_onEvent, onError: (_) => _lost('event stream failed'));
@@ -425,6 +435,67 @@ class AppState extends ChangeNotifier {
     unawaited(store.writePending(pending.values.map((n) => n.toJson()).toList()));
     _append(from, Msg(id: id, out: false, text: text, ts: sentAt));
     if (viewing != from) _bump(from);
+    notifyListeners();
+  }
+
+  // ── identity cards ──
+
+  /// My card, as QR text. It names the active hub, so scanning it is enough to reach me.
+  rust.CardOut? myCard() {
+    final me = identity;
+    if (me == null) return null;
+    try {
+      return rust.cardMine(name: me.name, seedsB64: me.seedsB64, hub: activeHub?.url);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Read a scanned card without acting on it, so the UI can confirm first.
+  rust.CardOut readCard(String text) => rust.cardRead(text: text);
+
+  /// Add someone by their card: pin their keys, join the hub it names if we have none in
+  /// common, and ask to connect. Returns a line for the UI.
+  Future<String> addCard(String text) async {
+    final card = rust.cardRead(text: text);
+    if (card.instanceId == identity?.instanceId) return 'That is your own card.';
+    cards[card.instanceId] = card.text;
+    await store.writeCards(cards.values.toList());
+    final c = contacts.putIfAbsent(
+      card.instanceId,
+      () => Contact(instanceId: card.instanceId, name: card.name, keyString: ''),
+    );
+    if (card.name.isNotEmpty) c.name = card.name;
+    c.reachable = card.seals || c.reachable;
+    unawaited(store.writeContacts(contacts.values.map((x) => x.toJson()).toList()));
+    notifyListeners();
+
+    // A card can name a hub, so scanning one is enough to go from nothing to chatting.
+    final hub = card.hub;
+    if (hub != null && !hubs.any((h) => h.url == hub)) {
+      try {
+        await addHub(hub);
+      } catch (e) {
+        return '${card.name} added, but their hub could not be joined: ${_short(e)}';
+      }
+    }
+    // Reconnect so the pinned keys are in force for this session.
+    if (activeHub != null) {
+      await disconnect();
+      await connect();
+    }
+    if (!consents.contains(card.instanceId)) {
+      final note = await requestConnect(card.instanceId, note: 'scanned your card');
+      if (note != null) return '${card.name} added. $note';
+    }
+    return card.seals
+        ? '${card.name} added — their keys are pinned, so no hub can read or impersonate.'
+        : '${card.name} added from an identity-only code; sealing keys still come from the hub.';
+  }
+
+  Future<void> forgetCard(String instanceId) async {
+    cards.remove(instanceId);
+    await store.writeCards(cards.values.toList());
     notifyListeners();
   }
 
@@ -687,22 +758,20 @@ class AppState extends ChangeNotifier {
           return 'Held: $reason';
       }
     }
-    if (contact?.isCaller == true) {
-      if (_reachable?.sendChat(to: to, text: text, sentAt: ts) == true) {
-        _append(to, Msg(id: 'out-$ts', out: true, text: text, ts: ts));
-        notifyListeners();
-        return null;
-      }
-      _hold(to, contact?.name ?? to, text, ts);
-      return '${contact?.name ?? 'They'} are not connected — held until they are';
+    if (contact?.isCaller == true && _reachable?.sendChat(to: to, text: text, sentAt: ts) == true) {
+      _append(to, Msg(id: 'out-$ts', out: true, text: text, ts: ts));
+      notifyListeners();
+      return null;
     }
-    if (contact?.isNode == true) {
-      _hold(to, contact?.name ?? to, text, ts);
-      return '${contact?.name ?? 'That node'} is not reachable — held until it is';
-    }
+    // A contact is an identity, not an address. When the direct route is down — an address
+    // that moved, a phone that stopped listening — the same person is still reachable through
+    // a hub you both use, so fall back to it rather than holding.
     final s = _session;
-    if (s == null || !connected) {
+    final onHub = connected && s != null && contacts[to]?.keyString.isNotEmpty == true;
+    final direct = contact?.isNode == true || contact?.isCaller == true;
+    if (s == null || !connected || (direct && !onHub)) {
       _hold(to, contact?.name ?? to, text, ts);
+      if (direct) return '${contact?.name ?? 'They'} are not reachable right now — held until they are';
       return 'Not connected — held until you are';
     }
     final v = await s.sendChat(to: to, text: text, sentAt: ts);

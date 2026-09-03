@@ -6,6 +6,7 @@
 //! by the inner signature against the key the roster vouched for. The hub sees routing and
 //! ciphertext, nothing else.
 
+use crate::card::ContactCard;
 use crate::keys::{parse_key_string, KeyError, PeerKeys};
 use crate::message::{now_ms, Message};
 use crate::seal::{seal, unseal, SealError, SealedBox};
@@ -119,6 +120,8 @@ struct Inner {
 	roster: Mutex<Vec<Member>>,
 	inflight: Mutex<HashMap<String, (String, oneshot::Sender<Verdict>)>>,
 	consents: Mutex<HashSet<String>>,
+	/// Cards the person scanned: their keys, pinned by us rather than vouched by the hub.
+	pinned: Mutex<HashMap<String, ContactCard>>,
 	seen: Mutex<HashMap<String, i64>>,
 	pending: Mutex<Vec<Notice>>,
 	last_chat_from: Mutex<HashMap<String, i64>>,
@@ -188,6 +191,7 @@ impl HubClient {
 		hub_key_string: &str,
 		me: Arc<Identity>,
 		consents: impl IntoIterator<Item = String>,
+		pinned: impl IntoIterator<Item = ContactCard>,
 	) -> Result<(HubClient, mpsc::UnboundedReceiver<Event>), ClientError> {
 		let hub = parse_key_string(hub_key_string)?;
 		let base = hub_url.trim_end_matches('/').to_string();
@@ -247,6 +251,12 @@ impl HubClient {
 			roster: Mutex::new(Vec::new()),
 			inflight: Mutex::new(HashMap::new()),
 			consents: Mutex::new(consents.into_iter().collect()),
+			pinned: Mutex::new(
+				pinned
+					.into_iter()
+					.map(|c| (c.instance_id(), c))
+					.collect(),
+			),
 			seen: Mutex::new(HashMap::new()),
 			pending: Mutex::new(Vec::new()),
 			last_chat_from: Mutex::new(HashMap::new()),
@@ -390,12 +400,25 @@ impl HubClient {
 		let Some(member) = inner.find_member(to) else {
 			return Verdict::Refused(format!("no such member: {to}"));
 		};
-		let Some(x_pub) = member.x_public.as_deref() else {
+		// The hub supplies the sealing keys, so when a card was scanned they have to match what
+		// it committed to. Without that a hostile hub could hand out its own and read
+		// everything it forwards.
+		if let Some(card) = inner.pinned.lock().unwrap().get(&member.instance_id) {
+			if let Err(e) = card.verify(
+				&member.key_string,
+				member.x_public.as_deref(),
+				member.mlkem_public.as_deref(),
+			) {
+				return Verdict::Refused(format!("{}: {e}", member.name));
+			}
+		}
+		let (x_pub, mlkem_pub) = (member.x_public.clone(), member.mlkem_public.clone());
+		let Some(x_pub) = x_pub else {
 			return Verdict::Refused(format!("{} announces no sealing key", member.name));
 		};
 		let msg = Message::create(&inner.me, r#type, &member.instance_id, payload);
 		let aad = format!("{}|{}", inner.me.instance_id(), member.instance_id);
-		let sealed = match seal(x_pub, member.mlkem_public.as_deref(), msg.to_json().as_bytes(), &aad) {
+		let sealed = match seal(&x_pub, mlkem_pub.as_deref(), msg.to_json().as_bytes(), &aad) {
 			Ok(s) => s,
 			Err(e) => return Verdict::Refused(format!("seal: {e}")),
 		};
@@ -532,16 +555,34 @@ impl Inner {
 		if inner.from != from || inner.to != self.me.instance_id() {
 			return;
 		}
-		// The inner signature must match the key the roster vouches for.
+		// The inner signature must match the key we pinned for them, or — when we pinned none —
+		// the one the roster vouches for. A roster that contradicts a pinned card is somebody
+		// being passed off as them, so nothing from it is delivered.
 		let Some(member) = self.find_member(from) else { return };
-		let Ok(peer) = parse_key_string(&member.key_string) else { return };
+		let card = self.pinned.lock().unwrap().get(from).cloned();
+		let peer = match &card {
+			// A scanned card decides: the keys the hub offers must be the ones it committed to,
+			// or this is somebody being passed off as them and nothing is delivered.
+			Some(c) => {
+				let Ok(p) = c.verify(&member.key_string, member.x_public.as_deref(), member.mlkem_public.as_deref())
+				else {
+					return;
+				};
+				p
+			}
+			None => {
+				let Ok(p) = parse_key_string(&member.key_string) else { return };
+				p
+			}
+		};
+		let member_name = member.name.clone();
 		if inner.verify(&peer, now_ms()).is_err() {
 			return;
 		}
 		if !self.first_time(&inner.from, &inner.id) {
 			return;
 		}
-		let from_name = inner.payload["fromName"].as_str().unwrap_or(&member.name).to_string();
+		let from_name = inner.payload["fromName"].as_str().unwrap_or(&member_name).to_string();
 		match inner.r#type.as_str() {
 			"chat:message" => {
 				let Some(text) = inner.payload["text"].as_str() else { return };

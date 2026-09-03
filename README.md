@@ -14,7 +14,9 @@ Flutter UI on both stores, Rust protocol core underneath. Both are here.
 | `harness/` | A tiny Node program that runs core's real implementation one primitive at a time, driven by the Rust tests. Needs OpenVole checked out beside this repo. |
 | `app/` | The Flutter app (iOS, Android, macOS). |
 
-Three ways to reach someone, in order of directness: **nearby** (one phone listens, the other dials — no hub, no internet), **a node** (dial an agent at its address), and **a hub** (relayed, for when neither side has an address).
+You add people by **identity**, not address: scan their code once and they stay reachable wherever either of you moves. Underneath, three routes carry it — **nearby** (one phone listens, the other dials, no hub and no internet), **a node** (dial an agent at its address), and **a hub** (relayed, for when neither side has an address) — and the app uses whichever is up.
+
+A code is small on purpose. Post-quantum keys are far too big for a QR (ML-DSA-65 alone is 1952 bytes, all four about 4.4 KB of base64, against a 2953-byte ceiling), so a code carries the Ed25519 key plus a **fingerprint over the whole key set**, about 160 characters. The bulk still arrives from the hub, and is checked against that fingerprint — so the hub supplies the keys but cannot change them, and cannot read or impersonate.
 
 ## Design decisions, and why
 

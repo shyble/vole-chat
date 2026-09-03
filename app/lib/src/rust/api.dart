@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `identity_from`, `identity_info`, `member_info`, `notice_info`, `session_event`, `verdict`
+// These functions are ignored because they are not marked as `pub`: `card_out`, `identity_from`, `identity_info`, `member_info`, `notice_info`, `session_event`, `verdict`
 
 IdentityInfo identityCreate({required String name}) =>
     RustLib.instance.api.crateApiIdentityCreate(name: name);
@@ -44,12 +44,14 @@ Future<Session> sessionConnect({
   required String name,
   required String seedsB64,
   required List<String> consents,
+  required List<String> cards,
 }) => RustLib.instance.api.crateApiSessionConnect(
   url: url,
   hubKeyString: hubKeyString,
   name: name,
   seedsB64: seedsB64,
   consents: consents,
+  cards: cards,
 );
 
 OutboxAdd outboxAdd({
@@ -119,6 +121,21 @@ Future<Reachable> reachableStart({
 
 /// This device's address on the local network, if it has one.
 String? localAddress() => RustLib.instance.api.crateApiLocalAddress();
+
+/// My own card, to show as a QR. Naming a hub makes it enough on its own.
+CardOut cardMine({
+  required String name,
+  required String seedsB64,
+  String? hub,
+}) => RustLib.instance.api.crateApiCardMine(
+  name: name,
+  seedsB64: seedsB64,
+  hub: hub,
+);
+
+/// Read a scanned card. Accepts a bare key string too, which pins less.
+CardOut cardRead({required String text}) =>
+    RustLib.instance.api.crateApiCardRead(text: text);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NodeSession>>
 abstract class NodeSession implements RustOpaqueInterface {
@@ -232,6 +249,47 @@ class CallerOut {
           instanceId == other.instanceId &&
           name == other.name &&
           connected == other.connected;
+}
+
+class CardOut {
+  /// The QR text. Hand this to someone, or scan theirs.
+  final String text;
+  final String instanceId;
+  final String name;
+
+  /// Commits to every key, so a hub can neither read nor impersonate. False for an
+  /// identity-only code, which pins who they are but not what they seal with.
+  final bool seals;
+
+  /// A hub the card names, if any.
+  final String? hub;
+
+  const CardOut({
+    required this.text,
+    required this.instanceId,
+    required this.name,
+    required this.seals,
+    this.hub,
+  });
+
+  @override
+  int get hashCode =>
+      text.hashCode ^
+      instanceId.hashCode ^
+      name.hashCode ^
+      seals.hashCode ^
+      hub.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CardOut &&
+          runtimeType == other.runtimeType &&
+          text == other.text &&
+          instanceId == other.instanceId &&
+          name == other.name &&
+          seals == other.seals &&
+          hub == other.hub;
 }
 
 class FlushOutcome {

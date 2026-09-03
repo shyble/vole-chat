@@ -8,6 +8,7 @@
 //! - [`der`]       SPKI DER wrapping of raw public keys (§1)
 //! - [`keys`]      identity: the four keypairs, key strings, instance ids (§1)
 //! - [`canonical`] the JSON canonicalization every signature covers (§2)
+//! - [`card`]      an identity you can hand someone, pinning all four of their public keys
 //! - [`message`]   signed messages: create and verify (§2)
 //! - [`seal`]      hybrid X25519 + ML-KEM-768 sealed envelopes (§3)
 //! - [`client`]    a hub session: join, announce, roster, relayed chat, consent, notices (§4–§7)
@@ -17,6 +18,7 @@
 
 pub mod api;
 pub mod canonical;
+pub mod card;
 pub mod client;
 pub mod der;
 pub mod keys;
@@ -28,6 +30,7 @@ pub mod seal;
 #[allow(clippy::all, unused_imports, unused_variables, dead_code)]
 mod frb_generated;
 
+pub use card::{CardError, ContactCard};
 pub use client::{Event, HubClient, JoinInfo, Member, Notice, Verdict};
 pub use keys::{Identity, PeerKeys};
 pub use listen::{lan_ip, Listener, PairRequest};
