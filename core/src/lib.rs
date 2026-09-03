@@ -11,6 +11,7 @@
 //! - [`message`]   signed messages: create and verify (§2)
 //! - [`seal`]      hybrid X25519 + ML-KEM-768 sealed envelopes (§3)
 //! - [`client`]    a hub session: join, announce, roster, relayed chat, consent, notices (§4–§7)
+//! - [`listen`]    being reachable: the same protocol served, so another phone or an agent can dial us
 //! - [`node`]      a direct session with one node, no hub: pair, connect, sealed chat
 //! - [`outbox`]    what waits for someone who is away, and when it goes (§7, §8)
 
@@ -19,6 +20,7 @@ pub mod canonical;
 pub mod client;
 pub mod der;
 pub mod keys;
+pub mod listen;
 pub mod message;
 pub mod node;
 pub mod outbox;
@@ -28,6 +30,7 @@ mod frb_generated;
 
 pub use client::{Event, HubClient, JoinInfo, Member, Notice, Verdict};
 pub use keys::{Identity, PeerKeys};
+pub use listen::{lan_ip, Listener, PairRequest};
 pub use node::{node_info, node_pair, DirectClient, NodeInfo, PairOutcome};
 pub use outbox::{Outbox, OutboxEntry};
 pub use message::Message;

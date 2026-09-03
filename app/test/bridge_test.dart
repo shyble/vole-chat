@@ -156,6 +156,52 @@ void main() {
     }
   });
 
+  test('being reachable, and another identity dialling us, through the bridge', () async {
+    final alice = identityCreate(name: 'alice-dart');
+    final bob = identityCreate(name: 'bob-dart');
+
+    final me = await reachableStart(name: alice.name, seedsB64: alice.seedsB64, port: 0, accepted: []);
+    expect(me.isListening(), isTrue);
+    expect(me.port(), greaterThan(0));
+    final url = 'http://127.0.0.1:${me.port()}';
+    final events = Replay(me.events());
+
+    // Bob fingerprints Alice and asks. Nothing is trusted by connecting.
+    final info = await nodeInfo(url: url);
+    expect(info.instanceId, alice.instanceId);
+    await expectLater(
+      nodeConnect(url: url, nodeKeyString: info.keyString, name: bob.name, seedsB64: bob.seedsB64),
+      throwsA(predicate((e) => e.toString().contains('not trusted'))),
+    );
+    final pair = await nodePair(url: url, name: bob.name, seedsB64: bob.seedsB64, note: 'over here');
+    expect(pair.queued, isTrue);
+    final req = await events.firstWhere((e) => e is SessionEvent_ConnectRequest, const Duration(seconds: 10))
+        as SessionEvent_ConnectRequest;
+    expect(req.fromName, 'bob-dart');
+    expect(req.note, 'over here');
+    expect(me.requests().single.instanceId, bob.instanceId);
+
+    // Alice accepts, keeps his key, and the link opens.
+    expect(me.accept(instanceId: bob.instanceId), bob.keyString);
+    expect(me.requests(), isEmpty);
+    final link = await nodeConnect(url: url, nodeKeyString: info.keyString, name: bob.name, seedsB64: bob.seedsB64);
+    final bobEvents = Replay(link.events());
+    await bobEvents.firstWhere((e) => e is SessionEvent_Connected, const Duration(seconds: 10));
+
+    // Both directions.
+    expect(link.sendChat(text: 'hi alice'), isA<SendVerdict_Delivered>());
+    final in1 = await events.firstWhere((e) => e is SessionEvent_Chat, const Duration(seconds: 10)) as SessionEvent_Chat;
+    expect(in1.text, 'hi alice');
+    expect(me.callers().single.connected, isTrue);
+    expect(me.sendChat(to: bob.instanceId, text: 'hi bob'), isTrue);
+    final in2 = await bobEvents.firstWhere((e) => e is SessionEvent_Chat, const Duration(seconds: 10)) as SessionEvent_Chat;
+    expect(in2.text, 'hi bob');
+
+    await link.close();
+    me.stop();
+    expect(me.isListening(), isFalse);
+  });
+
   test('straight to a node, through the bridge', () async {
     final h = await Harness.spawn();
     try {

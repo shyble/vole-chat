@@ -56,6 +56,7 @@ class Contact {
     this.connected = false,
     this.reachable = false,
     this.isNode = false,
+    this.isCaller = false,
     this.sealed = true,
   });
   final String instanceId;
@@ -65,6 +66,8 @@ class Contact {
   bool reachable;
   /// Reached directly, not through a hub. No consent step: pairing was the consent.
   bool isNode;
+  /// They dialled us rather than the other way round — we are the reachable one.
+  bool isCaller;
   /// For a direct node: whether chat to it is sealed end to end (it announced sealing keys).
   bool sealed;
 
@@ -74,6 +77,7 @@ class Contact {
         'keyString': keyString,
         'reachable': reachable,
         'isNode': isNode,
+        'isCaller': isCaller,
         'sealed': sealed,
       };
   static Contact fromJson(Map<String, dynamic> j) => Contact(
@@ -82,6 +86,7 @@ class Contact {
         keyString: j['keyString'] as String? ?? '',
         reachable: j['reachable'] as bool? ?? false,
         isNode: j['isNode'] as bool? ?? false,
+        isCaller: j['isCaller'] as bool? ?? false,
         sealed: j['sealed'] as bool? ?? true,
       );
 }
@@ -165,6 +170,14 @@ class AppState extends ChangeNotifier {
   String? viewing;
   Timer? _reconnect;
 
+  /// Being reachable: another phone (or an agent) dials us instead.
+  rust.Reachable? _reachable;
+  StreamSubscription<rust.SessionEvent>? _reachableEvents;
+  bool nearby = false;
+  String? nearbyUrl;
+  String? nearbyError;
+  final Set<String> callerKeys = {};
+
   final Map<String, rust.NodeSession> _nodeSessions = {};
   final Map<String, StreamSubscription<rust.SessionEvent>> _nodeEvents = {};
   final Map<String, String> nodeStatus = {};
@@ -202,6 +215,8 @@ class AppState extends ChangeNotifier {
       pending[notice.from] = notice;
     }
     outboxJson = await store.readOutbox();
+    callerKeys.addAll(await store.readCallers());
+    nearby = store.nearby;
     notifyListeners();
     if (identity != null) connectAll();
   }
@@ -216,6 +231,7 @@ class AppState extends ChangeNotifier {
     for (final n in nodes) {
       unawaited(connectNode(n));
     }
+    if (nearby) unawaited(startNearby());
   }
 
   /// The app is going away: close everything cleanly so the other side knows at once.
@@ -227,6 +243,7 @@ class AppState extends ChangeNotifier {
     for (final id in _nodeSessions.keys.toList()) {
       unawaited(_closeNode(id, 'app in background'));
     }
+    _stopNearby();
   }
 
   // ── identity ──
@@ -388,14 +405,14 @@ class AppState extends ChangeNotifier {
         m.instanceId,
         () => Contact(instanceId: m.instanceId, name: m.name, keyString: m.keyString),
       );
-      if (c.isNode) continue; // a direct node's presence is its own session's business
+      if (c.isNode || c.isCaller) continue; // their own link decides whether they are here
       c.name = m.name;
       if (m.keyString.isNotEmpty) c.keyString = m.keyString;
       c.connected = m.connected;
       c.reachable = m.reachable;
     }
     for (final c in contacts.values) {
-      if (!c.isNode && !seen.contains(c.instanceId)) c.connected = false;
+      if (!c.isNode && !c.isCaller && !seen.contains(c.instanceId)) c.connected = false;
     }
     unawaited(store.writeContacts(contacts.values.map((c) => c.toJson()).toList()));
     notifyListeners();
@@ -409,6 +426,92 @@ class AppState extends ChangeNotifier {
     _append(from, Msg(id: id, out: false, text: text, ts: sentAt));
     if (viewing != from) _bump(from);
     notifyListeners();
+  }
+
+  // ── being reachable ──
+
+  /// Start (or stop) accepting callers on this network. Foreground only, like everything else.
+  Future<void> setNearby(bool on) async {
+    nearby = on;
+    await store.setNearby(on);
+    if (on) {
+      await startNearby();
+    } else {
+      _stopNearby();
+    }
+    notifyListeners();
+  }
+
+  Future<void> startNearby() async {
+    final me = identity;
+    if (me == null || _reachable != null || !_foreground) return;
+    nearbyError = null;
+    try {
+      final r = await rust.reachableStart(
+        name: me.name,
+        seedsB64: me.seedsB64,
+        port: 0,
+        accepted: callerKeys.toList(),
+      );
+      _reachable = r;
+      nearbyUrl = r.url();
+      if (nearbyUrl == null) nearbyError = 'No network address — join a Wi-Fi network first.';
+      _reachableEvents = r.events().listen(_onReachableEvent, onError: (_) => _stopNearby());
+      _syncCallers();
+    } catch (e) {
+      nearbyError = _short(e);
+      nearbyUrl = null;
+    }
+    notifyListeners();
+  }
+
+  void _stopNearby() {
+    _reachableEvents?.cancel();
+    _reachableEvents = null;
+    _reachable?.stop();
+    _reachable = null;
+    nearbyUrl = null;
+    for (final c in contacts.values) {
+      if (c.isCaller) c.connected = false;
+    }
+    notifyListeners();
+  }
+
+  void _onReachableEvent(rust.SessionEvent e) {
+    switch (e) {
+      case rust.SessionEvent_ConnectRequest(:final from, :final fromName, :final note):
+        _ensureContact(from, fromName);
+        contacts[from]?.isCaller = true;
+        requests.add(from);
+        unawaited(store.writeRequests(requests.toList()));
+        if (note != null && note.isNotEmpty) {
+          _append(from, Msg(id: 'req-$from-${_now()}', out: false, text: note, ts: _now(), system: true));
+        }
+        _bump(from);
+        notifyListeners();
+      case rust.SessionEvent_Chat(:final from, :final fromName, :final text, :final sentAt, :final id):
+        _syncCallers();
+        _onChat(from, fromName, text, sentAt, id);
+      default:
+        break;
+    }
+  }
+
+  /// Mirror the listener's view of who is accepted and connected into contacts.
+  void _syncCallers() {
+    final r = _reachable;
+    if (r == null) return;
+    for (final c in r.callers()) {
+      final contact = contacts.putIfAbsent(
+        c.instanceId,
+        () => Contact(instanceId: c.instanceId, name: c.name, keyString: ''),
+      );
+      contact.isCaller = true;
+      contact.reachable = true;
+      contact.connected = c.connected;
+      if (c.name.isNotEmpty) contact.name = c.name;
+    }
+    unawaited(store.writeContacts(contacts.values.map((c) => c.toJson()).toList()));
   }
 
   // ── direct nodes ──
@@ -584,6 +687,15 @@ class AppState extends ChangeNotifier {
           return 'Held: $reason';
       }
     }
+    if (contact?.isCaller == true) {
+      if (_reachable?.sendChat(to: to, text: text, sentAt: ts) == true) {
+        _append(to, Msg(id: 'out-$ts', out: true, text: text, ts: ts));
+        notifyListeners();
+        return null;
+      }
+      _hold(to, contact?.name ?? to, text, ts);
+      return '${contact?.name ?? 'They'} are not connected — held until they are';
+    }
     if (contact?.isNode == true) {
       _hold(to, contact?.name ?? to, text, ts);
       return '${contact?.name ?? 'That node'} is not reachable — held until it is';
@@ -649,10 +761,20 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> approve(String id) async {
-    consents.add(id);
     requests.remove(id);
-    await store.writeConsents(consents.toList());
     await store.writeRequests(requests.toList());
+    // A caller asked us directly: accepting is what opens their link, and their key is ours
+    // to keep so they stay trusted next time.
+    final key = _reachable?.accept(instanceId: id);
+    if (key != null) {
+      callerKeys.add(key);
+      await store.writeCallers(callerKeys.toList());
+      _syncCallers();
+      notifyListeners();
+      return;
+    }
+    consents.add(id);
+    await store.writeConsents(consents.toList());
     _session?.accept(instanceId: id);
     await _session?.approve(to: id);
     notifyListeners();
@@ -661,7 +783,11 @@ class AppState extends ChangeNotifier {
   Future<void> deny(String id) async {
     requests.remove(id);
     await store.writeRequests(requests.toList());
-    await _session?.deny(to: id);
+    if (contacts[id]?.isCaller == true) {
+      _reachable?.deny(instanceId: id);
+    } else {
+      await _session?.deny(to: id);
+    }
     notifyListeners();
   }
 
@@ -708,6 +834,8 @@ class AppState extends ChangeNotifier {
     _reconnect?.cancel();
     _nodeRetry?.cancel();
     _events?.cancel();
+    _reachableEvents?.cancel();
+    _reachable?.stop();
     for (final s in _nodeEvents.values) {
       s.cancel();
     }

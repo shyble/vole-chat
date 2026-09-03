@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 futures-util = "0.3"
+axum = { version = "0.8", features = ["ws", "json"] }
 flutter_rust_bridge = "=2.13.0"
 anyhow = "1"
 

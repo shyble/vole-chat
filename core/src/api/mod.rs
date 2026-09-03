@@ -4,7 +4,7 @@
 
 use crate::frb_generated::StreamSink;
 use crate::keys::Seeds;
-use crate::{DirectClient, Event, HubClient, Identity, Outbox, Verdict};
+use crate::{DirectClient, Event, HubClient, Identity, Listener, Outbox, Verdict};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use flutter_rust_bridge::frb;
 use std::sync::Arc;
@@ -406,5 +406,124 @@ impl NodeSession {
 
 	pub async fn close(&self) {
 		self.client.close().await
+	}
+}
+
+// ── Being reachable (another phone, or an agent, dials us) ────────────────
+
+pub struct PairRequestOut {
+	pub instance_id: String,
+	pub name: String,
+	pub key_string: String,
+	pub note: Option<String>,
+	pub at: i64,
+}
+
+pub struct CallerOut {
+	pub instance_id: String,
+	pub name: String,
+	pub connected: bool,
+}
+
+/// Listening for callers. Events on `events()`; hand the URL to whoever should dial you.
+#[frb(opaque)]
+pub struct Reachable {
+	listener: Listener,
+	rx: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Event>>>,
+	runtime: tokio::runtime::Handle,
+}
+
+/// Start being reachable on this network. `port` 0 picks a free one; `accepted` are the key
+/// strings of callers trusted in an earlier run.
+pub async fn reachable_start(
+	name: String,
+	seeds_b64: String,
+	port: u16,
+	accepted: Vec<String>,
+) -> anyhow::Result<Reachable> {
+	let me = Arc::new(identity_from(&name, &seeds_b64)?);
+	let (listener, rx) = Listener::start(me, port, accepted).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+	Ok(Reachable { listener, rx: std::sync::Mutex::new(Some(rx)), runtime: tokio::runtime::Handle::current() })
+}
+
+/// This device's address on the local network, if it has one.
+#[frb(sync)]
+pub fn local_address() -> Option<String> {
+	crate::lan_ip()
+}
+
+impl Reachable {
+	pub fn events(&self, sink: StreamSink<SessionEvent>) {
+		let Some(mut rx) = self.rx.lock().unwrap().take() else { return };
+		self.runtime.spawn(async move {
+			while let Some(e) = rx.recv().await {
+				if sink.add(session_event(e)).is_err() {
+					break;
+				}
+			}
+		});
+	}
+
+	/// The URL to hand to the other phone.
+	#[frb(sync)]
+	pub fn url(&self) -> Option<String> {
+		self.listener.url()
+	}
+
+	#[frb(sync)]
+	pub fn port(&self) -> u16 {
+		self.listener.port()
+	}
+
+	#[frb(sync)]
+	pub fn is_listening(&self) -> bool {
+		self.listener.is_listening()
+	}
+
+	/// Callers asking to be trusted.
+	#[frb(sync)]
+	pub fn requests(&self) -> Vec<PairRequestOut> {
+		self.listener
+			.requests()
+			.into_iter()
+			.map(|r| PairRequestOut {
+				instance_id: r.instance_id,
+				name: r.name,
+				key_string: r.key_string,
+				note: r.note,
+				at: r.at,
+			})
+			.collect()
+	}
+
+	/// Trust a caller. Returns its key string for the app to persist.
+	#[frb(sync)]
+	pub fn accept(&self, instance_id: String) -> Option<String> {
+		self.listener.accept(&instance_id)
+	}
+
+	#[frb(sync)]
+	pub fn deny(&self, instance_id: String) {
+		self.listener.deny(&instance_id)
+	}
+
+	#[frb(sync)]
+	pub fn callers(&self) -> Vec<CallerOut> {
+		self.listener
+			.callers()
+			.into_iter()
+			.map(|(instance_id, name, connected)| CallerOut { instance_id, name, connected })
+			.collect()
+	}
+
+	/// Chat back to a caller. False when its socket is not up — hold it instead.
+	#[frb(sync)]
+	pub fn send_chat(&self, to: String, text: String, sent_at: Option<i64>) -> bool {
+		self.listener.send_chat(&to, &text, sent_at)
+	}
+
+	#[frb(sync)]
+	pub fn stop(&self) {
+		self.listener.stop()
 	}
 }

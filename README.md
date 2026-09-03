@@ -14,6 +14,8 @@ Flutter UI on both stores, Rust protocol core underneath. Both are here.
 | `harness/` | A tiny Node program that runs core's real implementation one primitive at a time, driven by the Rust tests. Needs OpenVole checked out beside this repo. |
 | `app/` | The Flutter app (iOS, Android, macOS). |
 
+Three ways to reach someone, in order of directness: **nearby** (one phone listens, the other dials — no hub, no internet), **a node** (dial an agent at its address), and **a hub** (relayed, for when neither side has an address).
+
 ## Design decisions, and why
 
 - **Hub keeps nothing readable.** Envelopes are sealed to static keys with no ratchet, so ciphertext at rest on a third party would be retroactively readable on a later key compromise. An undelivered message stays in the sender's outbox; the hub records only that somebody tried. See `PROTOCOL.md` §7.
@@ -44,5 +46,6 @@ The bridge's Dart bindings are generated: after changing `core/src/api/`, run `f
 - [x] Hub client: join, announce, roster, relay, consent, outbox, notices — tested against a real hub and member (`core/tests/hub.rs`)
 - [x] Flutter app over the bridge: onboarding, hubs, chats (consent, held messages, notices), key backup — macOS build and Dart-side hub and node tests pass (`app/test/bridge_test.dart`)
 - [x] Direct connections to nodes (your own agents): fingerprint, pair request, operator accepts once, then sealed chat straight over the node's address — `core/tests/node.rs`
+- [x] Phone to phone on one network, with nothing in between: one listens, the other dials it the same way — `core/tests/phone_to_phone.rs`
 - [x] Live while open, closed cleanly in the background, reconnects on resume
 - [ ] Store builds (iOS: needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`, then `flutter build ios`; Android: needs the Android SDK and NDK installed, then `flutter build apk`)

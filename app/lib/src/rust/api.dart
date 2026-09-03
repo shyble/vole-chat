@@ -103,6 +103,23 @@ Future<NodeSession> nodeConnect({
   seedsB64: seedsB64,
 );
 
+/// Start being reachable on this network. `port` 0 picks a free one; `accepted` are the key
+/// strings of callers trusted in an earlier run.
+Future<Reachable> reachableStart({
+  required String name,
+  required String seedsB64,
+  required int port,
+  required List<String> accepted,
+}) => RustLib.instance.api.crateApiReachableStart(
+  name: name,
+  seedsB64: seedsB64,
+  port: port,
+  accepted: accepted,
+);
+
+/// This device's address on the local network, if it has one.
+String? localAddress() => RustLib.instance.api.crateApiLocalAddress();
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NodeSession>>
 abstract class NodeSession implements RustOpaqueInterface {
   Future<void> close();
@@ -118,6 +135,37 @@ abstract class NodeSession implements RustOpaqueInterface {
   bool seals();
 
   SendVerdict sendChat({required String text, PlatformInt64? sentAt});
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Reachable>>
+abstract class Reachable implements RustOpaqueInterface {
+  /// Trust a caller. Returns its key string for the app to persist.
+  String? accept({required String instanceId});
+
+  List<CallerOut> callers();
+
+  void deny({required String instanceId});
+
+  Stream<SessionEvent> events();
+
+  bool isListening();
+
+  int port();
+
+  /// Callers asking to be trusted.
+  List<PairRequestOut> requests();
+
+  /// Chat back to a caller. False when its socket is not up — hold it instead.
+  bool sendChat({
+    required String to,
+    required String text,
+    PlatformInt64? sentAt,
+  });
+
+  void stop();
+
+  /// The URL to hand to the other phone.
+  String? url();
 }
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Session>>
@@ -160,6 +208,30 @@ abstract class Session implements RustOpaqueInterface {
     required String text,
     PlatformInt64? sentAt,
   });
+}
+
+class CallerOut {
+  final String instanceId;
+  final String name;
+  final bool connected;
+
+  const CallerOut({
+    required this.instanceId,
+    required this.name,
+    required this.connected,
+  });
+
+  @override
+  int get hashCode => instanceId.hashCode ^ name.hashCode ^ connected.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CallerOut &&
+          runtimeType == other.runtimeType &&
+          instanceId == other.instanceId &&
+          name == other.name &&
+          connected == other.connected;
 }
 
 class FlushOutcome {
@@ -435,6 +507,41 @@ class PairOutcomeOut {
           runtimeType == other.runtimeType &&
           alreadyTrusted == other.alreadyTrusted &&
           queued == other.queued;
+}
+
+class PairRequestOut {
+  final String instanceId;
+  final String name;
+  final String keyString;
+  final String? note;
+  final PlatformInt64 at;
+
+  const PairRequestOut({
+    required this.instanceId,
+    required this.name,
+    required this.keyString,
+    this.note,
+    required this.at,
+  });
+
+  @override
+  int get hashCode =>
+      instanceId.hashCode ^
+      name.hashCode ^
+      keyString.hashCode ^
+      note.hashCode ^
+      at.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PairRequestOut &&
+          runtimeType == other.runtimeType &&
+          instanceId == other.instanceId &&
+          name == other.name &&
+          keyString == other.keyString &&
+          note == other.note &&
+          at == other.at;
 }
 
 class PeerInfo {

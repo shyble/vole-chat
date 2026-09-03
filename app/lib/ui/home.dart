@@ -113,7 +113,7 @@ class _ContactTile extends StatelessWidget {
       subtitle = 'tried to reach you ${notice.count == 1 ? 'once' : '${notice.count} times'} while you were away';
     } else if (last != null) {
       subtitle = (last.out ? 'You: ' : '') + last.text;
-    } else if (c?.isNode == true) {
+    } else if (c?.isNode == true || c?.isCaller == true) {
       subtitle = c!.connected ? 'direct · online' : 'direct · offline';
     } else {
       subtitle = c?.connected == true ? 'online' : 'away';

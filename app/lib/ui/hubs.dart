@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../app_state.dart';
 import '../src/rust/api.dart' as rust;
@@ -95,6 +97,8 @@ class _HubsPageState extends State<HubsPage> {
       builder: (context, _) => ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          _Nearby(s),
+          const SizedBox(height: 28),
           Text('Hubs', style: t.headlineSmall),
           const SizedBox(height: 4),
           Text(
@@ -217,6 +221,87 @@ class _NodeCard extends StatelessWidget {
           itemBuilder: (_) => const [
             PopupMenuItem(value: 'reconnect', child: Text('Reconnect')),
             PopupMenuItem(value: 'remove', child: Text('Forget')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Be reachable on this network, so another phone (or an agent) can dial you.
+///
+/// Two phones cannot dial each other across the internet — neither has an address — so away
+/// from a shared network they talk through a hub. Here they need nothing in between.
+class _Nearby extends StatelessWidget {
+  const _Nearby(this.s);
+  final AppState s;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final callers = s.contacts.values.where((c) => c.isCaller).toList();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 6, 8, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('Nearby', style: t.titleMedium)),
+                Switch(value: s.nearby, onChanged: (v) => s.setNearby(v)),
+              ],
+            ),
+            Text(
+              'Let someone on this Wi-Fi dial you directly — no hub, no internet. They add the address '
+              'below under Direct nodes, and you accept them here.',
+              style: t.bodyMedium,
+            ),
+            if (s.nearby) ...[
+              const SizedBox(height: 12),
+              if (s.nearbyUrl != null)
+                SelectableText(s.nearbyUrl!, style: t.titleMedium?.copyWith(fontFeatures: const [])),
+              if (s.nearbyError != null)
+                Text(s.nearbyError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              if (s.nearbyUrl != null) ...[
+                const SizedBox(height: 10),
+                Center(
+                  child: Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.all(8),
+                    child: QrImageView(data: s.nearbyUrl!, size: 160, version: QrVersions.auto),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: s.nearbyUrl!));
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(const SnackBar(content: Text('Address copied')));
+                      }
+                    },
+                    icon: const Icon(Icons.copy, size: 18),
+                    label: const Text('Copy address'),
+                  ),
+                ),
+              ],
+              if (callers.isNotEmpty) ...[
+                const Divider(),
+                Text('Accepted callers', style: t.titleSmall),
+                for (final c in callers)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(c.connected ? Icons.link : Icons.link_off,
+                        color: c.connected ? Colors.green : null, size: 20),
+                    title: Text(c.name.isEmpty ? c.instanceId : c.name),
+                    subtitle: Text(c.connected ? 'connected' : 'not connected', style: t.bodySmall),
+                  ),
+              ],
+            ],
           ],
         ),
       ),

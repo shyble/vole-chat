@@ -42,6 +42,13 @@ class Store {
   Future<void> writeNodes(List<Map<String, dynamic>> nodes) =>
       _secure.write(key: 'nodes', value: jsonEncode({'list': nodes}));
 
+  /// Key strings of callers we accepted, so they stay trusted across restarts.
+  Future<List<String>> readCallers() async =>
+      ((await _readJsonSecure('callers') ?? const {})['list'] as List<dynamic>? ?? const [])
+          .cast<String>();
+  Future<void> writeCallers(List<String> keys) =>
+      _secure.write(key: 'callers', value: jsonEncode({'list': keys}));
+
   Future<List<String>> readConsents() async =>
       ((await _readJsonSecure('consents') ?? const {})['list'] as List<dynamic>? ?? const [])
           .cast<String>();
@@ -117,6 +124,9 @@ class Store {
   String? get activeHub => _prefs.getString('activeHub');
   Future<void> setActiveHub(String? url) async =>
       url == null ? _prefs.remove('activeHub') : _prefs.setString('activeHub', url);
+
+  bool get nearby => _prefs.getBool('nearby') ?? false;
+  Future<void> setNearby(bool on) => _prefs.setBool('nearby', on);
 
   Map<String, int> get unread {
     final raw = _prefs.getString('unread');

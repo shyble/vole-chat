@@ -56,7 +56,7 @@ class _ChatPageState extends State<ChatPage> {
               children: [
                 Text(name),
                 Text(
-                  c?.isNode == true
+                  c?.isNode == true || c?.isCaller == true
                       ? (c!.connected ? 'direct · ${c.sealed ? 'sealed end to end' : 'signed'}' : 'direct · offline — held until it is back')
                       : (c?.connected == true ? 'online' : 'away — messages wait here until they are back'),
                   style: Theme.of(context).textTheme.bodySmall,
@@ -75,7 +75,7 @@ class _ChatPageState extends State<ChatPage> {
                     FilledButton(onPressed: () => s.approve(widget.peerId), child: const Text('Accept')),
                   ],
                 )
-              else if (!consented && c != null && !c.isNode)
+              else if (!consented && c != null && !c.isNode && !c.isCaller)
                 _Banner(
                   icon: Icons.lock_outline,
                   text: 'You have not connected with $name yet. Sending a message asks them to accept you.',

@@ -45,5 +45,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>vole-chat connects directly to people and agents on this network, so your messages never leave it.</string>
 </dict>
 </plist>
