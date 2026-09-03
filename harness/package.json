@@ -1,0 +1,13 @@
+{
+  "name": "vole-chat-harness",
+  "private": true,
+  "type": "module",
+  "description": "Drives OpenVole core's own TypeScript (checked out beside this repo) to prove the Rust core interoperates byte-for-byte.",
+  "scripts": {
+    "interop": "tsx interop.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.0"
+  }
+}

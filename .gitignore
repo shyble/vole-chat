@@ -1,0 +1,16 @@
+# rust
+core/target/
+# node
+node_modules/
+harness/node_modules/
+# flutter
+app/build/
+app/.dart_tool/
+app/ios/Pods/
+app/ios/.symlinks/
+app/android/.gradle/
+app/**/GeneratedPluginRegistrant.*
+# local
+.local/
+*.log
+.DS_Store
