@@ -20,6 +20,8 @@ const PORTS_EARLY: (u16, u16) = (19971, 19972);
 const PORTS_BOTH: (u16, u16) = (19969, 19970);
 const PORTS_UNACCEPTED: (u16, u16) = (19967, 19968);
 const PORTS_DOUBLE: (u16, u16) = (19965, 19966);
+const PORTS_RECONNECT: (u16, u16) = (19963, 19964);
+const PORTS_FORGOTTEN: (u16, u16) = (19961, 19962);
 
 struct Hub {
 	child: Child,
@@ -108,7 +110,8 @@ async fn asking_to_connect_before_the_roster_arrives_reaches_nobody() {
 	HubClient::join(&hub.url, &a).await.expect("a joins");
 	HubClient::join(&hub.url, &b).await.expect("b joins");
 
-	let (ca, _ra) = HubClient::connect(&hub.url, &hub.key, a.clone(), [], []).await.expect("a connects");
+	let (ca, _ra) = HubClient::connect(&hub.url, &hub.key, a.clone(), [], [], [])
+.await.expect("a connects");
 	// This is what the app did: ask the moment the session opens.
 	let v = ca.request_connect(b.instance_id(), Some("scanned your card")).await;
 	assert!(
@@ -130,8 +133,8 @@ async fn two_clients_add_each_other_by_card_and_chat() {
 	// Each scans the other's code.
 	let card_a = ContactCard::mine(&a, Some(&hub.url));
 	let card_b = ContactCard::mine(&b, Some(&hub.url));
-	let (ca, mut ra) = HubClient::connect(&hub.url, &hub.key, a.clone(), [], [card_b.clone()]).await.expect("a");
-	let (cb, mut rb) = HubClient::connect(&hub.url, &hub.key, b.clone(), [], [card_a.clone()]).await.expect("b");
+	let (ca, mut ra) = HubClient::connect(&hub.url, &hub.key, a.clone(), [], [card_b.clone()], []).await.expect("a");
+	let (cb, mut rb) = HubClient::connect(&hub.url, &hub.key, b.clone(), [], [card_a.clone()], []).await.expect("b");
 
 	// Wait to be told the other exists — the step the app was skipping.
 	assert!(until_rostered(&ca, b.instance_id(), 30).await, "a sees b");
@@ -170,8 +173,10 @@ async fn a_message_from_someone_unaccepted_surfaces_as_a_request_not_a_chat() {
 	let b = Arc::new(Identity::generate("recipient"));
 	HubClient::join(&hub.url, &a).await.expect("a joins");
 	HubClient::join(&hub.url, &b).await.expect("b joins");
-	let (ca, _ra) = HubClient::connect(&hub.url, &hub.key, a.clone(), [b.instance_id().to_string()], []).await.expect("a");
-	let (cb, mut rb) = HubClient::connect(&hub.url, &hub.key, b.clone(), [], []).await.expect("b");
+	let (ca, _ra) = HubClient::connect(&hub.url, &hub.key, a.clone(), [b.instance_id().to_string()], [], [])
+.await.expect("a");
+	let (cb, mut rb) = HubClient::connect(&hub.url, &hub.key, b.clone(), [], [], [])
+.await.expect("b");
 	assert!(until_rostered(&ca, b.instance_id(), 30).await);
 
 	// The hub forwards it and says so; the recipient still holds it, because nobody agreed to
@@ -196,10 +201,13 @@ async fn a_second_session_from_the_same_identity_leaves_one_of_them_deaf() {
 	HubClient::join(&hub.url, &me).await.expect("join");
 	HubClient::join(&hub.url, &other).await.expect("other joins");
 
-	let (first, _r1) = HubClient::connect(&hub.url, &hub.key, me.clone(), [], []).await.expect("first");
-	let (second, _r2) = HubClient::connect(&hub.url, &hub.key, me.clone(), [], []).await.expect("second");
+	let (first, _r1) = HubClient::connect(&hub.url, &hub.key, me.clone(), [], [], [])
+.await.expect("first");
+	let (second, _r2) = HubClient::connect(&hub.url, &hub.key, me.clone(), [], [], [])
+.await.expect("second");
 	// Give the hub time to bind, roster, and resolve the duplicate.
-	let (_o, _ro) = HubClient::connect(&hub.url, &hub.key, other.clone(), [], []).await.expect("other");
+	let (_o, _ro) = HubClient::connect(&hub.url, &hub.key, other.clone(), [], [], [])
+.await.expect("other");
 	tokio::time::sleep(Duration::from_secs(3)).await;
 
 	// Both sessions believe they are up, because each opened a socket and got a reply. But only
@@ -213,4 +221,79 @@ async fn a_second_session_from_the_same_identity_leaves_one_of_them_deaf() {
 	assert!(saw_first || saw_second, "one of them should have been served");
 	first.close().await;
 	second.close().await;
+}
+
+/// Closing and immediately reconnecting, which is what applying a scanned card did.
+///
+/// A hub keeps one socket per peer. If our close has not reached it yet, the socket it still
+/// believes in looks live, and it may drop the new one instead — choosing by how the two
+/// instance ids compare, so it fails on some devices and not others. The new session then sits
+/// there connected, never rostered, answering every send with "no such member".
+#[tokio::test(flavor = "multi_thread")]
+async fn reconnecting_at_once_still_gets_a_roster() {
+	let tmp = tempfile::tempdir().unwrap();
+	let hub = Hub::spawn(tmp.path(), PORTS_RECONNECT);
+	let me = Arc::new(Identity::generate("rejoiner"));
+	let other = Arc::new(Identity::generate("somebody"));
+	HubClient::join(&hub.url, &me).await.expect("join");
+	HubClient::join(&hub.url, &other).await.expect("other joins");
+	let (_o, _ro) = HubClient::connect(&hub.url, &hub.key, other.clone(), [], [], [])
+.await.expect("other");
+
+	let (first, _r1) = HubClient::connect(&hub.url, &hub.key, me.clone(), [], [], [])
+.await.expect("first");
+	assert!(until_rostered(&first, other.instance_id(), 30).await, "the first session is served");
+
+	// Close and reconnect the way the app does after scanning a card.
+	first.close().await;
+	drop(first);
+	let (second, _r2) = HubClient::connect(&hub.url, &hub.key, me.clone(), [], [], [])
+.await.expect("second");
+	assert!(
+		until_rostered(&second, other.instance_id(), 30).await,
+		"the reconnected session must be told who is there, or every send fails with 'no such member'"
+	);
+	second.close().await;
+}
+
+/// Writing to someone the hub has never described — the case that broke it.
+///
+/// You cannot hold two phones at once, so the other one is locked, its app closed, and a hub
+/// forgets a member 45 s after they go quiet. Scan their code then and the hub can tell you
+/// nothing about them. With only a fingerprint there would be nothing to seal to and every
+/// send would fail with "no such member"; the card carries their sealing keys, so the message
+/// is sealed, offered, and held for them.
+#[tokio::test(flavor = "multi_thread")]
+async fn someone_the_hub_never_mentioned_can_still_be_written_to() {
+	let tmp = tempfile::tempdir().unwrap();
+	let hub = Hub::spawn(tmp.path(), PORTS_FORGOTTEN);
+	let a = Arc::new(Identity::generate("awake"));
+	let b = Arc::new(Identity::generate("asleep"));
+	HubClient::join(&hub.url, &a).await.expect("a joins");
+	HubClient::join(&hub.url, &b).await.expect("b joins");
+
+	// B never connects at all, so no roster ever names them. A has only their scanned code.
+	let card_b = ContactCard::mine(&b, Some(&hub.url));
+	assert!(card_b.seals(), "a code carries the keys needed to reach someone");
+	let (ca, _ra) = HubClient::connect(&hub.url, &hub.key, a.clone(), [], [card_b.clone()], []).await.expect("a");
+	assert!(ca.member(b.instance_id()).is_none(), "the hub has said nothing about them");
+
+	assert_eq!(
+		ca.send_chat(b.instance_id(), "written before we ever met", None).await,
+		Verdict::Held,
+		"sealed from the code and held for them, not refused"
+	);
+
+	// And when they do arrive, it is delivered — the outbox flush is the app's job, so here we
+	// simply prove the same send now goes straight through.
+	let (cb, mut rb) = HubClient::connect(&hub.url, &hub.key, b.clone(), [a.instance_id().to_string()], [], [])
+		.await
+		.expect("b arrives");
+	assert!(until_rostered(&ca, b.instance_id(), 30).await, "now the hub describes them");
+	assert_eq!(ca.send_chat(b.instance_id(), "and again once you woke", None).await, Verdict::Delivered);
+	let ev = wait_event(&mut rb, 20, |e| matches!(e, Event::Chat { .. })).await;
+	assert!(matches!(&ev, Event::Chat { text, .. } if text == "and again once you woke"), "{ev:?}");
+
+	ca.close().await;
+	cb.close().await;
 }

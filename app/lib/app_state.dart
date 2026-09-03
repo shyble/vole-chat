@@ -187,6 +187,10 @@ class AppState extends ChangeNotifier {
   /// roster arrives reaches nobody: the session does not yet know the member, so the request
   /// is refused locally and the other side never hears of it.
   final Map<String, String?> _wantConnect = {};
+  /// Members the hub has named, kept across sessions. A hub forgets a member 45 s after their
+  /// screen locks, and writing to someone whose screen is off is exactly when a message needs
+  /// holding — so what we were told before is what makes that possible.
+  List<String> _known = [];
 
   final Map<String, rust.NodeSession> _nodeSessions = {};
   final Map<String, StreamSubscription<rust.SessionEvent>> _nodeEvents = {};
@@ -226,6 +230,7 @@ class AppState extends ChangeNotifier {
     }
     outboxJson = await store.readOutbox();
     callerKeys.addAll(await store.readCallers());
+    _known = await store.readKnown();
     for (final text in await store.readCards()) {
       try {
         cards[rust.cardRead(text: text).instanceId] = text;
@@ -339,6 +344,7 @@ class AppState extends ChangeNotifier {
         seedsB64: me.seedsB64,
         consents: consents.toList(),
         cards: cards.values.toList(),
+        known: _known,
       );
       _session = s;
       _events = s.events().listen(_onEvent, onError: (_) => _lost('event stream failed'));
@@ -444,6 +450,11 @@ class AppState extends ChangeNotifier {
       if (!c.isNode && !c.isCaller && !seen.contains(c.instanceId)) c.connected = false;
     }
     unawaited(store.writeContacts(contacts.values.map((c) => c.toJson()).toList()));
+    final learned = _session?.knownMembers();
+    if (learned != null && learned.isNotEmpty) {
+      _known = learned;
+      unawaited(store.writeKnown(_known));
+    }
     notifyListeners();
     _flushWanted();
     unawaited(flushOutbox());
@@ -519,12 +530,14 @@ class AppState extends ChangeNotifier {
         return '${card.name} added, but their hub could not be joined: ${_short(e)}';
       }
     }
-    // The pinned keys are handed over at connect time, so the session has to be renewed —
-    // once, after any hub join above has finished, or the two race.
-    if (activeHub != null) {
-      await disconnect();
-      await connect();
+    // Pin it on the live session. Reconnecting to apply a card was what left two sockets to
+    // the hub, and a hub keeps only one — so the app could end up holding the dropped one.
+    try {
+      _session?.pin(cardText: card.text);
+    } catch (_) {
+      // a code we cannot pin is still a contact; it just relies on the hub's word
     }
+    if (activeHub != null && _session == null) await connect();
     // Ask as soon as the hub tells us they exist, not before.
     if (!consents.contains(card.instanceId)) {
       _wantConnect[card.instanceId] = 'scanned your card';

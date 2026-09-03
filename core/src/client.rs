@@ -122,6 +122,14 @@ struct Inner {
 	consents: Mutex<HashSet<String>>,
 	/// Cards the person scanned: their keys, pinned by us rather than vouched by the hub.
 	pinned: Mutex<HashMap<String, ContactCard>>,
+	/// Everyone we have ever been told about, with the keys they were verified as having.
+	///
+	/// A hub drops a member from its roster 45 s after they go quiet, and a phone goes quiet
+	/// the moment its screen locks. Without this, writing to someone whose screen is off fails
+	/// with "no such member" — which is precisely when a message most needs to be held for
+	/// them. Remembering their keys means we can still seal it, the hub can still say it is
+	/// holding it, and it goes out when they are back.
+	known: Mutex<HashMap<String, Member>>,
 	seen: Mutex<HashMap<String, i64>>,
 	pending: Mutex<Vec<Notice>>,
 	last_chat_from: Mutex<HashMap<String, i64>>,
@@ -192,6 +200,7 @@ impl HubClient {
 		me: Arc<Identity>,
 		consents: impl IntoIterator<Item = String>,
 		pinned: impl IntoIterator<Item = ContactCard>,
+		known: impl IntoIterator<Item = Member>,
 	) -> Result<(HubClient, mpsc::UnboundedReceiver<Event>), ClientError> {
 		let hub = parse_key_string(hub_key_string)?;
 		let base = hub_url.trim_end_matches('/').to_string();
@@ -257,6 +266,7 @@ impl HubClient {
 					.map(|c| (c.instance_id(), c))
 					.collect(),
 			),
+			known: Mutex::new(known.into_iter().map(|m| (m.instance_id.clone(), m)).collect()),
 			seen: Mutex::new(HashMap::new()),
 			pending: Mutex::new(Vec::new()),
 			last_chat_from: Mutex::new(HashMap::new()),
@@ -342,6 +352,16 @@ impl HubClient {
 		self.inner.find_member(id_or_name)
 	}
 
+	/// Everyone we have been told about and verified, so the app can keep them across restarts.
+	pub fn known_members(&self) -> Vec<Member> {
+		self.inner.known.lock().unwrap().values().cloned().collect()
+	}
+
+	/// Pin a card on a live session, so scanning one needs no reconnect.
+	pub fn pin(&self, card: ContactCard) {
+		self.inner.pinned.lock().unwrap().insert(card.instance_id(), card);
+	}
+
 	/// Who tried to reach me while I was away, until their messages arrive.
 	pub fn pending(&self) -> Vec<Notice> {
 		self.inner.pending.lock().unwrap().clone()
@@ -404,21 +424,35 @@ impl HubClient {
 		if inner.closed.load(Ordering::SeqCst) {
 			return Verdict::Refused("not connected".into());
 		}
-		let Some(member) = inner.find_member(to) else {
-			return Verdict::Refused(format!("no such member: {to}"));
-		};
-		// The hub supplies the sealing keys, so when a card was scanned they have to match what
-		// it committed to. Without that a hostile hub could hand out its own and read
-		// everything it forwards.
-		if let Some(card) = inner.pinned.lock().unwrap().get(&member.instance_id) {
-			if let Err(e) = card.verify(
-				&member.key_string,
-				member.x_public.as_deref(),
-				member.mlkem_public.as_deref(),
-			) {
-				return Verdict::Refused(format!("{}: {e}", member.name));
+		let member = match inner.find_member(to) {
+			Some(m) => {
+				// The hub supplies the sealing keys, so when a card was scanned they have to
+				// match what it committed to. Without that a hostile hub could hand out its own
+				// and read everything it forwards.
+				if let Some(card) = inner.pinned.lock().unwrap().get(&m.instance_id) {
+					if let Err(e) =
+						card.verify(&m.key_string, m.x_public.as_deref(), m.mlkem_public.as_deref())
+					{
+						return Verdict::Refused(format!("{}: {e}", m.name));
+					}
+				}
+				m
 			}
-		}
+			// No hub has described them — they have been away long enough to be forgotten, or
+			// were never online while we were. A scanned card carries their sealing keys, so we
+			// can still write, and the hub will hold it for them.
+			None => match inner.pinned.lock().unwrap().get(to).cloned() {
+				Some(c) if c.seals() => Member {
+					instance_id: c.instance_id(),
+					name: c.name.clone(),
+					key_string: String::new(),
+					x_public: Some(c.x_public.clone()),
+					mlkem_public: (!c.mlkem_public.is_empty()).then(|| c.mlkem_public.clone()),
+					connected: false,
+				},
+				_ => return Verdict::Refused(format!("no such member: {to}")),
+			},
+		};
 		let (x_pub, mlkem_pub) = (member.x_public.clone(), member.mlkem_public.clone());
 		let Some(x_pub) = x_pub else {
 			return Verdict::Refused(format!("{} announces no sealing key", member.name));
@@ -469,11 +503,19 @@ impl Inner {
 	}
 
 	fn find_member(&self, id_or_name: &str) -> Option<Member> {
-		let roster = self.roster.lock().unwrap();
-		roster
-			.iter()
-			.find(|m| m.instance_id == id_or_name || m.name == id_or_name || m.instance_id.starts_with(id_or_name))
-			.cloned()
+		let matches = |m: &Member| {
+			m.instance_id == id_or_name || m.name == id_or_name || m.instance_id.starts_with(id_or_name)
+		};
+		if let Some(m) = self.roster.lock().unwrap().iter().find(|m| matches(m)) {
+			return Some(m.clone());
+		}
+		// Not on the roster now — away, or gone long enough for the hub to forget them. What we
+		// were told before is still true, and is what lets the message be held for them.
+		self.known.lock().unwrap().values().find(|m| matches(m)).map(|m| {
+			let mut away = m.clone();
+			away.connected = false;
+			away
+		})
 	}
 
 	/// A text frame from the hub. Only the hub may speak on this socket, and only with a valid,
@@ -548,6 +590,21 @@ impl Inner {
 				connected: m["connected"].as_bool().unwrap_or(false),
 			});
 		}
+		{
+			let pinned = self.pinned.lock().unwrap();
+			let mut known = self.known.lock().unwrap();
+			for m in &members {
+				// Only remember keys that satisfy a card we hold, so a hostile roster cannot
+				// poison what we fall back to later.
+				let ok = match pinned.get(&m.instance_id) {
+					Some(c) => c.verify(&m.key_string, m.x_public.as_deref(), m.mlkem_public.as_deref()).is_ok(),
+					None => !m.key_string.is_empty(),
+				};
+				if ok {
+					known.insert(m.instance_id.clone(), m.clone());
+				}
+			}
+		}
 		*self.roster.lock().unwrap() = members.clone();
 		let _ = self.events.send(Event::Roster(members));
 	}
@@ -565,16 +622,34 @@ impl Inner {
 		// The inner signature must match the key we pinned for them, or — when we pinned none —
 		// the one the roster vouches for. A roster that contradicts a pinned card is somebody
 		// being passed off as them, so nothing from it is delivered.
-		let Some(member) = self.find_member(from) else { return };
 		let card = self.pinned.lock().unwrap().get(from).cloned();
+		let Some(member) = self.find_member(from).or_else(|| {
+			// A first message from someone no roster has described yet: their card is enough to
+			// know who they are, and their name.
+			card.as_ref().filter(|c| c.seals()).map(|c| Member {
+				instance_id: c.instance_id(),
+				name: c.name.clone(),
+				key_string: String::new(),
+				x_public: Some(c.x_public.clone()),
+				mlkem_public: (!c.mlkem_public.is_empty()).then(|| c.mlkem_public.clone()),
+				connected: false,
+			})
+		}) else {
+			return;
+		};
 		let peer = match &card {
 			// A scanned card decides: the keys the hub offers must be the ones it committed to,
 			// or this is somebody being passed off as them and nothing is delivered.
-			Some(c) => {
+			Some(c) if !member.key_string.is_empty() => {
 				let Ok(p) = c.verify(&member.key_string, member.x_public.as_deref(), member.mlkem_public.as_deref())
 				else {
 					return;
 				};
+				p
+			}
+			// Nothing to check it against yet, so the card's own identity key decides.
+			Some(c) => {
+				let Ok(p) = c.identity_peer() else { return };
 				p
 			}
 			None => {

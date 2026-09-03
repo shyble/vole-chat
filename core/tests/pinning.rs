@@ -117,8 +117,8 @@ async fn a_scanned_card_decides_whose_keys_are_accepted() {
 
 	// Connect with nothing pinned first, to see what the hub vouches for.
 	let (client, mut rx) =
-		HubClient::connect(&h.hub_url_owned(), &info.hub_key_string, me.clone(), [member_id.clone()], [])
-			.await
+		HubClient::connect(&h.hub_url_owned(), &info.hub_key_string, me.clone(), [member_id.clone()], [], [])
+.await
 			.expect("connect");
 	wait_event(&mut rx, 20, |e| matches!(e, Event::Roster(m) if m.iter().any(|x| x.instance_id == member_id && x.connected))).await;
 	let vouched = client.member(&member_id).expect("on the roster");
@@ -131,18 +131,21 @@ async fn a_scanned_card_decides_whose_keys_are_accepted() {
 	let good = ContactCard {
 		ed25519: ed.clone(),
 		name: "peer-b".into(),
+		x_public: real_x.clone(),
+		mlkem_public: real_mlkem.clone(),
 		fingerprint: fingerprint(&ed, &mldsa, &real_x, &real_mlkem),
 		hub: None,
 	};
 	assert!(good.seals());
 	assert_eq!(good.instance_id(), member_id);
-	assert!(good.encode().len() < 400, "a card has to fit in a QR");
+	assert!(good.encode().len() < 2953, "a card has to fit in a QR: {} chars", good.encode().len());
 	let (client, mut rx) = HubClient::connect(
 		&h.hub_url_owned(),
 		&info.hub_key_string,
 		me.clone(),
 		[member_id.clone()],
 		[good],
+		[],
 	)
 	.await
 	.expect("connect pinned");
@@ -157,14 +160,18 @@ async fn a_scanned_card_decides_whose_keys_are_accepted() {
 	// a hostile hub substituting its own would look like from our side. The keys the hub offers
 	// no longer match, so nothing is sent at all and the reason says why.
 	let impostor = Identity::generate("impostor");
+	// The card carries the impostor's sealing keys and a fingerprint that agrees with them, so
+	// it is internally consistent — and still contradicts what the hub says this identity uses.
 	let bad = ContactCard {
 		ed25519: ed.clone(),
 		name: "peer-b".into(),
+		x_public: impostor.x25519_public_b64(),
+		mlkem_public: impostor.mlkem_public_b64(),
 		fingerprint: fingerprint(&ed, &mldsa, &impostor.x25519_public_b64(), &impostor.mlkem_public_b64()),
 		hub: None,
 	};
 	let (client, mut rx) =
-		HubClient::connect(&h.hub_url_owned(), &info.hub_key_string, me.clone(), [member_id.clone()], [bad])
+		HubClient::connect(&h.hub_url_owned(), &info.hub_key_string, me.clone(), [member_id.clone()], [bad], [])
 			.await
 			.expect("connect mispinned");
 	wait_event(&mut rx, 20, |e| matches!(e, Event::Roster(m) if m.iter().any(|x| x.instance_id == member_id && x.connected))).await;

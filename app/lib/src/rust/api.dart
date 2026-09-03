@@ -45,6 +45,7 @@ Future<Session> sessionConnect({
   required String seedsB64,
   required List<String> consents,
   required List<String> cards,
+  required List<String> known,
 }) => RustLib.instance.api.crateApiSessionConnect(
   url: url,
   hubKeyString: hubKeyString,
@@ -52,6 +53,7 @@ Future<Session> sessionConnect({
   seedsB64: seedsB64,
   consents: consents,
   cards: cards,
+  known: known,
 );
 
 OutboxAdd outboxAdd({
@@ -217,7 +219,13 @@ abstract class Session implements RustOpaqueInterface {
 
   bool isConnected();
 
+  /// Everyone verified so far, as JSON for the app to keep. Seed the next session with these.
+  List<String> knownMembers();
+
   List<NoticeInfo> pending();
+
+  /// Pin a scanned card on this live session — no reconnect needed.
+  void pin({required String cardText});
 
   Future<SendVerdict> requestConnect({required String to, String? note});
 

@@ -172,10 +172,14 @@ pub async fn session_connect(
 	consents: Vec<String>,
 	// Scanned cards, as their QR text: their keys are pinned over anything the hub claims.
 	cards: Vec<String>,
+	// Members remembered from earlier sessions, as the JSON `known_members` returned. A hub
+	// forgets a member 45 s after their screen locks; this is how they stay writable.
+	known: Vec<String>,
 ) -> anyhow::Result<Session> {
 	let me = Arc::new(identity_from(&name, &seeds_b64)?);
 	let pinned: Vec<ContactCard> = cards.iter().filter_map(|c| ContactCard::decode(c).ok()).collect();
-	let (client, rx) = HubClient::connect(&url, &hub_key_string, me, consents, pinned)
+	let remembered: Vec<crate::Member> = known.iter().filter_map(|m| serde_json::from_str(m).ok()).collect();
+	let (client, rx) = HubClient::connect(&url, &hub_key_string, me, consents, pinned, remembered)
 		.await
 		.map_err(|e| anyhow::anyhow!("{e}"))?;
 	Ok(Session { client, rx: std::sync::Mutex::new(Some(rx)), runtime: tokio::runtime::Handle::current() })
@@ -234,6 +238,24 @@ impl Session {
 	#[frb(sync)]
 	pub fn revoke(&self, instance_id: String) {
 		self.client.revoke(&instance_id)
+	}
+
+	/// Pin a scanned card on this live session — no reconnect needed.
+	#[frb(sync)]
+	pub fn pin(&self, card_text: String) -> anyhow::Result<()> {
+		let card = ContactCard::decode(&card_text).map_err(|e| anyhow::anyhow!("{e}"))?;
+		self.client.pin(card);
+		Ok(())
+	}
+
+	/// Everyone verified so far, as JSON for the app to keep. Seed the next session with these.
+	#[frb(sync)]
+	pub fn known_members(&self) -> Vec<String> {
+		self.client
+			.known_members()
+			.iter()
+			.filter_map(|m| serde_json::to_string(m).ok())
+			.collect()
 	}
 
 	pub async fn send_chat(&self, to: String, text: String, sent_at: Option<i64>) -> SendVerdict {

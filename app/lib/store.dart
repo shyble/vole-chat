@@ -124,6 +124,11 @@ class Store {
     await tmp.rename(f.path);
   }
 
+  /// Members the hub has told us about, verified and kept so an away contact stays writable.
+  Future<List<String>> readKnown() async =>
+      ((await _readJsonFile('known.json')) as List<dynamic>? ?? const []).cast<String>();
+  Future<void> writeKnown(List<String> members) => _writeJsonFile('known.json', members);
+
   Future<List<Map<String, dynamic>>> readPending() async =>
       ((await _readJsonFile('pending.json')) as List<dynamic>? ?? const []).cast<Map<String, dynamic>>();
   Future<void> writePending(List<Map<String, dynamic>> p) => _writeJsonFile('pending.json', p);

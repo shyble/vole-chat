@@ -6,12 +6,15 @@
 //! its own and read everything it forwards. Signatures would still be unforgeable, but
 //! confidentiality would be gone.
 //!
-//! A card closes that without carrying the keys. Post-quantum keys are big — ML-DSA-65 alone is
-//! 1952 bytes, and all four together come to about 4.4 KB of base64, well past the 2953 bytes a
-//! QR code can hold at all. So the card carries the Ed25519 key, which is small and fixes the
-//! identity, plus a **fingerprint over the whole key set**. The bulk arrives over the wire as
-//! usual and is checked against that fingerprint: the hub still supplies the keys, but can no
-//! longer change them. About 160 characters, which is a comfortable QR to scan off a screen.
+//! A card closes that. It cannot carry everything — all four keys come to about 4.4 KB of
+//! base64, past the 2953 bytes a QR holds at all, and ML-DSA-65 alone is 1952 bytes. So it
+//! carries what is needed to *reach* someone: the Ed25519 key that fixes their identity, and
+//! the two **sealing** keys, about 1.7 KB together. The large ML-DSA signing key stays on the
+//! wire, bound by a **fingerprint over the whole set** so the hub cannot alter it either.
+//!
+//! Carrying the sealing keys is what lets you write to someone you have scanned but never seen
+//! online. A hub forgets a member 45 s after their screen locks, and with only a fingerprint
+//! there would be nothing to seal to — which is exactly when a message most needs to be held.
 
 use crate::der::{decode_spki, KeyKind};
 use crate::keys::{instance_id_from_ed25519_b64, parse_key_string, PeerKeys};
@@ -33,7 +36,13 @@ pub struct ContactCard {
 	/// Display name, for showing before anything is verified.
 	#[serde(rename = "n", default, skip_serializing_if = "String::is_empty")]
 	pub name: String,
-	/// SHA-256 over the full key set, base64. What the hub's copy has to match.
+	/// X25519 public key, base64 SPKI. Sealing goes here, with no hub involved.
+	#[serde(rename = "x", default, skip_serializing_if = "String::is_empty")]
+	pub x_public: String,
+	/// ML-KEM-768 public key, base64 SPKI — the post-quantum half of the seal.
+	#[serde(rename = "m", default, skip_serializing_if = "String::is_empty")]
+	pub mlkem_public: String,
+	/// SHA-256 over the full key set, base64. What the hub's copy of the rest has to match.
 	#[serde(rename = "f")]
 	pub fingerprint: String,
 	/// A hub where this identity can be found, so a card alone is enough to start.
@@ -69,15 +78,14 @@ impl ContactCard {
 	pub fn mine(me: &Identity, hub: Option<&str>) -> ContactCard {
 		let peer = me.as_peer();
 		let ed25519 = ed25519_b64_of(&peer.key_string).unwrap_or_default();
+		let x_public = me.x25519_public_b64();
+		let mlkem_public = me.mlkem_public_b64();
 		ContactCard {
-			fingerprint: fingerprint(
-				&ed25519,
-				&me.mldsa_public_b64(),
-				&me.x25519_public_b64(),
-				&me.mlkem_public_b64(),
-			),
+			fingerprint: fingerprint(&ed25519, &me.mldsa_public_b64(), &x_public, &mlkem_public),
 			ed25519,
 			name: me.name.clone(),
+			x_public,
+			mlkem_public,
 			hub: hub.map(str::to_string),
 		}
 	}
@@ -109,6 +117,8 @@ impl ContactCard {
 			return Ok(ContactCard {
 				ed25519: ed25519_b64_of(text).ok_or(CardError::Format)?,
 				name: peer.name,
+				x_public: String::new(),
+				mlkem_public: String::new(),
 				fingerprint: String::new(),
 				hub: None,
 			});
@@ -120,9 +130,29 @@ impl ContactCard {
 		instance_id_from_ed25519_b64(&self.ed25519)
 	}
 
-	/// Whether this card commits to sealing keys, or only names an identity.
+	/// Whether this card carries sealing keys, or only names an identity.
 	pub fn seals(&self) -> bool {
-		!self.fingerprint.is_empty()
+		!self.x_public.is_empty() && !self.fingerprint.is_empty()
+	}
+
+	/// The identity alone, for verifying a first message from someone no hub has described yet.
+	/// Ed25519 only: the ML-DSA key is too big for a card, so hybrid verification starts once a
+	/// roster supplies it and the fingerprint has checked out.
+	pub fn identity_peer(&self) -> Result<PeerKeys, CardError> {
+		let der = B64.decode(&self.ed25519).map_err(|_| CardError::Format)?;
+		let (kind, raw) = decode_spki(&der).map_err(|_| CardError::Format)?;
+		if kind != KeyKind::Ed25519 {
+			return Err(CardError::Format);
+		}
+		let arr: [u8; 32] = raw.as_slice().try_into().map_err(|_| CardError::Format)?;
+		let ed = ed25519_dalek::VerifyingKey::from_bytes(&arr).map_err(|_| CardError::Format)?;
+		Ok(PeerKeys {
+			instance_id: self.instance_id(),
+			name: self.name.clone(),
+			ed25519: ed,
+			mldsa: None,
+			key_string: String::new(),
+		})
 	}
 
 	/// Check what a hub offered for this identity against what the card committed to.
@@ -164,12 +194,17 @@ mod tests {
 		(me.key_string(), me.x25519_public_b64(), me.mlkem_public_b64())
 	}
 
+	fn back_seals(c: &ContactCard) -> bool {
+		c.seals()
+	}
+
 	#[test]
 	fn a_card_is_small_enough_to_scan_and_names_its_identity() {
 		let me = Identity::generate("alice");
 		let card = ContactCard::mine(&me, Some("https://club.openvole.com/mesh"));
 		let text = card.encode();
-		assert!(text.len() < 400, "a QR has to hold this: {} chars", text.len());
+		assert!(text.len() < 2953, "a QR has to hold this: {} chars", text.len());
+		assert!(back_seals(&card));
 		let back = ContactCard::decode(&text).unwrap();
 		assert_eq!(back, card);
 		assert_eq!(back.instance_id(), me.instance_id());

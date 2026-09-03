@@ -122,6 +122,7 @@ void main() {
         seedsB64: me.seedsB64,
         consents: [memberId],
         cards: [],
+        known: [],
       );
       final events = Replay(session.events());
       await events.firstWhere((e) => e is SessionEvent_Connected, const Duration(seconds: 10));

@@ -121,7 +121,8 @@ async fn a_phone_on_a_real_hub() {
 	HubClient::join(&h.hub_url, &me).await.expect("re-join");
 
 	// ── §5 announce + socket + bind; §6 roster ──
-	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), [], []).await.expect("connect");
+	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), [], [], [])
+.await.expect("connect");
 	assert!(matches!(wait_event(&mut rx, 10, |e| matches!(e, Event::Connected { .. })).await, Event::Connected { hub_name } if hub_name == "harness-hub"));
 	let member_id = h.member_id.clone();
 	wait_event(&mut rx, 20, |e| matches!(e, Event::Roster(m) if m.iter().any(|x| x.instance_id == member_id && x.connected))).await;
@@ -185,7 +186,8 @@ async fn a_phone_on_a_real_hub() {
 
 	// peer-b is online holding the message, so on our return it delivers straight away — and
 	// the notice about the attempt must not survive the message it announced.
-	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), [member_id.clone()], []).await.expect("reconnect");
+	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), [member_id.clone()], [], [])
+.await.expect("reconnect");
 	let ev = wait_event(&mut rx, 30, |e| matches!(e, Event::Chat { text, .. } if text == "you missed this")).await;
 	assert!(matches!(ev, Event::Chat { .. }));
 	tokio::time::sleep(Duration::from_millis(500)).await;
@@ -208,7 +210,8 @@ async fn a_request_sent_while_the_phone_is_closed_arrives_when_it_reopens() {
 	let member_id = h.member_id.clone();
 
 	// Be seen, then close the way the app does when the screen locks.
-	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), [], []).await.expect("connect");
+	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), [], [], [])
+.await.expect("connect");
 	wait_event(&mut rx, 20, |e| matches!(e, Event::Roster(m) if m.iter().any(|x| x.instance_id == member_id && x.connected))).await;
 	client.close().await;
 	drop(client);
@@ -227,7 +230,8 @@ async fn a_request_sent_while_the_phone_is_closed_arrives_when_it_reopens() {
 	assert_eq!(held[0]["note"], json!("it's your orchestrator"));
 
 	// Reopen the app: the request is delivered and surfaces for the user to accept.
-	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), [], []).await.expect("reconnect");
+	let (client, mut rx) = HubClient::connect(&h.hub_url, &info.hub_key_string, me.clone(), [], [], [])
+.await.expect("reconnect");
 	let ev = wait_event(&mut rx, 40, |e| matches!(e, Event::ConnectRequest { .. })).await;
 	assert!(
 		matches!(&ev, Event::ConnectRequest { from, from_name, note }
