@@ -9,7 +9,7 @@ Flutter UI on both stores, Rust protocol core underneath. Both are here.
 | path | what |
 |---|---|
 | `PROTOCOL.md` | The wire protocol as a client sees it, extracted from OpenVole core. Section numbers are referenced from the Rust code. |
-| `core/` | Rust crate `volenet`: identity, signed messages, hybrid X25519 + ML-KEM-768 sealed envelopes, and (next) the hub client. No UI, no storage. |
+| `core/` | Rust crate: identity, signed messages, hybrid X25519 + ML-KEM-768 sealed envelopes, the hub client, the direct-node client, the outbox policy, and the bridge API. No UI, no storage. |
 | `core/tests/interop.rs` | The tests that matter: every primitive proven against OpenVole's own TypeScript, in both directions. |
 | `harness/` | A tiny Node program that runs core's real implementation one primitive at a time, driven by the Rust tests. Needs OpenVole checked out beside this repo. |
 | `app/` | The Flutter app (iOS, Android, macOS). |
@@ -42,5 +42,7 @@ The bridge's Dart bindings are generated: after changing `core/src/api/`, run `f
 
 - [x] Identity, canonical signing, sealed envelopes — interoperating with OpenVole core
 - [x] Hub client: join, announce, roster, relay, consent, outbox, notices — tested against a real hub and member (`core/tests/hub.rs`)
-- [x] Flutter app over the bridge: onboarding, hubs, chats (consent, held messages, notices), key backup — macOS build and a Dart-side hub test pass (`app/test/bridge_test.dart`)
+- [x] Flutter app over the bridge: onboarding, hubs, chats (consent, held messages, notices), key backup — macOS build and Dart-side hub and node tests pass (`app/test/bridge_test.dart`)
+- [x] Direct connections to nodes (your own agents): fingerprint, pair request, operator accepts once, then sealed chat straight over the node's address — `core/tests/node.rs`
+- [x] Live while open, closed cleanly in the background, reconnects on resume
 - [ ] Store builds (iOS: needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`, then `flutter build ios`; Android: needs the Android SDK and NDK installed, then `flutter build apk`)

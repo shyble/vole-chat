@@ -155,4 +155,42 @@ void main() {
       await h.stop();
     }
   });
+
+  test('straight to a node, through the bridge', () async {
+    final h = await Harness.spawn();
+    try {
+      final url = h.ready['memberUrl'] as String;
+      final nodeId = h.ready['memberId'] as String;
+      final me = identityCreate(name: 'flutter-direct');
+
+      final info = await nodeInfo(url: url);
+      expect(info.instanceId, nodeId);
+      expect(info.name, 'peer-b');
+
+      // Refused until paired, with a message the app keys on.
+      await expectLater(
+        nodeConnect(url: url, nodeKeyString: info.keyString, name: me.name, seedsB64: me.seedsB64),
+        throwsA(predicate((e) => e.toString().contains('not trusted'))),
+      );
+      final pair = await nodePair(url: url, name: me.name, seedsB64: me.seedsB64, note: 'phone');
+      expect(pair.queued, isTrue);
+      await h.wait((x) => x['ev'] == 'volenet:pair:request' && x['fromName'] == 'flutter-direct', const Duration(seconds: 15));
+      h.cmd({'cmd': 'pair-accept', 'to': 'flutter-direct'});
+      await h.wait((x) => x['ev'] == 'pair-accept-result', const Duration(seconds: 10));
+
+      final node = await nodeConnect(url: url, nodeKeyString: info.keyString, name: me.name, seedsB64: me.seedsB64);
+      final events = Replay(node.events());
+      await events.firstWhere((e) => e is SessionEvent_Connected, const Duration(seconds: 10));
+      expect(node.seals(), isTrue);
+      expect(node.sendChat(text: 'direct from flutter'), isA<SendVerdict_Delivered>());
+      final got = await h.wait((x) => x['ev'] == 'volenet:chat' && x['text'] == 'direct from flutter', const Duration(seconds: 15));
+      expect(got['fromName'], 'flutter-direct');
+      h.cmd({'cmd': 'send', 'to': me.instanceId, 'text': 'direct back'});
+      final chat = await events.firstWhere((e) => e is SessionEvent_Chat, const Duration(seconds: 15)) as SessionEvent_Chat;
+      expect(chat.text, 'direct back');
+      await node.close();
+    } finally {
+      await h.stop();
+    }
+  });
 }

@@ -4,7 +4,7 @@
 
 use crate::frb_generated::StreamSink;
 use crate::keys::Seeds;
-use crate::{Event, HubClient, Identity, Outbox, Verdict};
+use crate::{DirectClient, Event, HubClient, Identity, Outbox, Verdict};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use flutter_rust_bridge::frb;
 use std::sync::Arc;
@@ -318,4 +318,93 @@ pub fn outbox_remove(outbox_json: String, r#ref: String) -> String {
 	let mut outbox = Outbox::from_json(&outbox_json);
 	outbox.remove(&r#ref);
 	outbox.to_json()
+}
+
+// ── Direct nodes (no hub) ─────────────────────────────────────────────────
+
+pub struct NodeInfoOut {
+	pub key_string: String,
+	pub instance_id: String,
+	pub name: Option<String>,
+	pub post_quantum: bool,
+}
+
+/// Fingerprint a node by URL before trusting it.
+pub async fn node_info(url: String) -> anyhow::Result<NodeInfoOut> {
+	let i = crate::node_info(&url).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+	Ok(NodeInfoOut { key_string: i.key_string, instance_id: i.instance_id, name: i.name, post_quantum: i.post_quantum })
+}
+
+pub struct PairOutcomeOut {
+	pub already_trusted: bool,
+	pub queued: bool,
+}
+
+/// Ask the node's operator to trust this identity.
+pub async fn node_pair(url: String, name: String, seeds_b64: String, note: Option<String>) -> anyhow::Result<PairOutcomeOut> {
+	let me = identity_from(&name, &seeds_b64)?;
+	let p = crate::node_pair(&url, &me, note.as_deref()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+	Ok(PairOutcomeOut { already_trusted: p.already_trusted, queued: p.queued })
+}
+
+/// A live direct connection to one node. Events on `events()`; chat is sealed end to end when
+/// the node announced sealing keys.
+#[frb(opaque)]
+pub struct NodeSession {
+	client: DirectClient,
+	rx: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Event>>>,
+	runtime: tokio::runtime::Handle,
+}
+
+/// Connect straight to a node. Fails with a message starting `not trusted` until its operator
+/// has accepted the pair request — keep the node listed and retry while the app is open.
+pub async fn node_connect(url: String, node_key_string: String, name: String, seeds_b64: String) -> anyhow::Result<NodeSession> {
+	let me = Arc::new(identity_from(&name, &seeds_b64)?);
+	let (client, rx) = DirectClient::connect(&url, &node_key_string, me).await.map_err(|e| match e {
+		crate::client::ClientError::NotTrusted => anyhow::anyhow!("not trusted yet"),
+		other => anyhow::anyhow!("{other}"),
+	})?;
+	Ok(NodeSession { client, rx: std::sync::Mutex::new(Some(rx)), runtime: tokio::runtime::Handle::current() })
+}
+
+impl NodeSession {
+	pub fn events(&self, sink: StreamSink<SessionEvent>) {
+		let Some(mut rx) = self.rx.lock().unwrap().take() else { return };
+		self.runtime.spawn(async move {
+			while let Some(e) = rx.recv().await {
+				if sink.add(session_event(e)).is_err() {
+					break;
+				}
+			}
+		});
+	}
+
+	#[frb(sync)]
+	pub fn node_instance_id(&self) -> String {
+		self.client.node_instance_id().to_string()
+	}
+
+	#[frb(sync)]
+	pub fn node_name(&self) -> String {
+		self.client.node_name()
+	}
+
+	#[frb(sync)]
+	pub fn is_connected(&self) -> bool {
+		self.client.is_connected()
+	}
+
+	#[frb(sync)]
+	pub fn seals(&self) -> bool {
+		self.client.seals()
+	}
+
+	#[frb(sync)]
+	pub fn send_chat(&self, text: String, sent_at: Option<i64>) -> SendVerdict {
+		verdict(self.client.send_chat(&text, sent_at))
+	}
+
+	pub async fn close(&self) {
+		self.client.close().await
+	}
 }

@@ -22,6 +22,32 @@ class Hub {
       );
 }
 
+/// A node reached directly — your own agent, typically. Trusted by pairing, not by a hub.
+class Node {
+  Node({
+    required this.url,
+    required this.keyString,
+    required this.instanceId,
+    required this.name,
+    this.paired = false,
+  });
+  final String url;
+  final String keyString;
+  final String instanceId;
+  String name;
+  bool paired;
+
+  Map<String, dynamic> toJson() =>
+      {'url': url, 'keyString': keyString, 'instanceId': instanceId, 'name': name, 'paired': paired};
+  static Node fromJson(Map<String, dynamic> j) => Node(
+        url: j['url'] as String,
+        keyString: j['keyString'] as String,
+        instanceId: j['instanceId'] as String,
+        name: j['name'] as String? ?? 'node',
+        paired: j['paired'] as bool? ?? false,
+      );
+}
+
 class Contact {
   Contact({
     required this.instanceId,
@@ -29,20 +55,34 @@ class Contact {
     required this.keyString,
     this.connected = false,
     this.reachable = false,
+    this.isNode = false,
+    this.sealed = true,
   });
   final String instanceId;
   String name;
   String keyString;
   bool connected;
   bool reachable;
+  /// Reached directly, not through a hub. No consent step: pairing was the consent.
+  bool isNode;
+  /// For a direct node: whether chat to it is sealed end to end (it announced sealing keys).
+  bool sealed;
 
-  Map<String, dynamic> toJson() =>
-      {'instanceId': instanceId, 'name': name, 'keyString': keyString, 'reachable': reachable};
+  Map<String, dynamic> toJson() => {
+        'instanceId': instanceId,
+        'name': name,
+        'keyString': keyString,
+        'reachable': reachable,
+        'isNode': isNode,
+        'sealed': sealed,
+      };
   static Contact fromJson(Map<String, dynamic> j) => Contact(
         instanceId: j['instanceId'] as String,
         name: j['name'] as String? ?? '',
         keyString: j['keyString'] as String? ?? '',
         reachable: j['reachable'] as bool? ?? false,
+        isNode: j['isNode'] as bool? ?? false,
+        sealed: j['sealed'] as bool? ?? true,
       );
 }
 
@@ -101,13 +141,15 @@ class Notice {
 
 const _outboxTtlMs = 7 * 24 * 60 * 60 * 1000;
 
-/// Everything the screens read, and every action they take. One hub session at a time.
+/// Everything the screens read, and every action they take. One hub session, plus one direct
+/// session per paired node. Live while the app is open; closed cleanly when it is not.
 class AppState extends ChangeNotifier {
   final Store store = Store();
 
   rust.IdentityInfo? identity;
   List<Hub> hubs = [];
   Hub? activeHub;
+  List<Node> nodes = [];
   final Map<String, Contact> contacts = {};
   final Map<String, List<Msg>> transcripts = {};
   final Map<String, int> unread = {};
@@ -122,6 +164,12 @@ class AppState extends ChangeNotifier {
   String? status;
   String? viewing;
   Timer? _reconnect;
+
+  final Map<String, rust.NodeSession> _nodeSessions = {};
+  final Map<String, StreamSubscription<rust.SessionEvent>> _nodeEvents = {};
+  final Map<String, String> nodeStatus = {};
+  Timer? _nodeRetry;
+  bool _foreground = true;
 
   bool get hasIdentity => identity != null;
 
@@ -138,6 +186,7 @@ class AppState extends ChangeNotifier {
     hubs = (await store.readHubs()).map(Hub.fromJson).toList();
     final active = store.activeHub;
     activeHub = hubs.where((h) => h.url == active).firstOrNull ?? hubs.firstOrNull;
+    nodes = (await store.readNodes()).map(Node.fromJson).toList();
     for (final c in await store.readContacts()) {
       final contact = Contact.fromJson(c);
       contacts[contact.instanceId] = contact;
@@ -154,7 +203,30 @@ class AppState extends ChangeNotifier {
     }
     outboxJson = await store.readOutbox();
     notifyListeners();
-    if (identity != null && activeHub != null) unawaited(connect());
+    if (identity != null) connectAll();
+  }
+
+  // ── lifecycle ──
+
+  /// The app came to the foreground: everything reconnects.
+  void connectAll() {
+    _foreground = true;
+    if (identity == null) return;
+    if (activeHub != null) unawaited(connect());
+    for (final n in nodes) {
+      unawaited(connectNode(n));
+    }
+  }
+
+  /// The app is going away: close everything cleanly so the other side knows at once.
+  void disconnectAll() {
+    _foreground = false;
+    _reconnect?.cancel();
+    _nodeRetry?.cancel();
+    unawaited(disconnect());
+    for (final id in _nodeSessions.keys.toList()) {
+      unawaited(_closeNode(id, 'app in background'));
+    }
   }
 
   // ── identity ──
@@ -206,12 +278,12 @@ class AppState extends ChangeNotifier {
     unawaited(connect());
   }
 
-  // ── session ──
+  // ── hub session ──
 
   Future<void> connect() async {
     final hub = activeHub;
     final me = identity;
-    if (hub == null || me == null || _session != null) return;
+    if (hub == null || me == null || _session != null || !_foreground) return;
     _reconnect?.cancel();
     status = 'Connecting to ${hub.name}…';
     notifyListeners();
@@ -243,7 +315,7 @@ class AppState extends ChangeNotifier {
     connected = false;
     status = null;
     for (final c in contacts.values) {
-      c.connected = false;
+      if (!c.isNode) c.connected = false;
     }
     notifyListeners();
   }
@@ -255,7 +327,7 @@ class AppState extends ChangeNotifier {
     connected = false;
     status = 'Disconnected: $reason';
     for (final c in contacts.values) {
-      c.connected = false;
+      if (!c.isNode) c.connected = false;
     }
     notifyListeners();
     _scheduleReconnect();
@@ -263,8 +335,9 @@ class AppState extends ChangeNotifier {
 
   void _scheduleReconnect() {
     _reconnect?.cancel();
+    if (!_foreground) return;
     _reconnect = Timer(const Duration(seconds: 10), () {
-      if (_session == null && activeHub != null) unawaited(connect());
+      if (_session == null && activeHub != null && _foreground) unawaited(connect());
     });
   }
 
@@ -284,7 +357,9 @@ class AppState extends ChangeNotifier {
         _ensureContact(from, fromName);
         requests.add(from);
         unawaited(store.writeRequests(requests.toList()));
-        if (note != null && note.isNotEmpty) _append(from, Msg(id: 'req-$from-${DateTime.now().millisecondsSinceEpoch}', out: false, text: note, ts: _now(), system: true));
+        if (note != null && note.isNotEmpty) {
+          _append(from, Msg(id: 'req-$from-${_now()}', out: false, text: note, ts: _now(), system: true));
+        }
         _bump(from);
         notifyListeners();
       case rust.SessionEvent_ConnectAccepted(:final from, :final fromName):
@@ -313,13 +388,14 @@ class AppState extends ChangeNotifier {
         m.instanceId,
         () => Contact(instanceId: m.instanceId, name: m.name, keyString: m.keyString),
       );
+      if (c.isNode) continue; // a direct node's presence is its own session's business
       c.name = m.name;
       if (m.keyString.isNotEmpty) c.keyString = m.keyString;
       c.connected = m.connected;
       c.reachable = m.reachable;
     }
     for (final c in contacts.values) {
-      if (!seen.contains(c.instanceId)) c.connected = false;
+      if (!c.isNode && !seen.contains(c.instanceId)) c.connected = false;
     }
     unawaited(store.writeContacts(contacts.values.map((c) => c.toJson()).toList()));
     notifyListeners();
@@ -335,13 +411,184 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── direct nodes ──
+
+  /// Fingerprint a node by URL. Nothing is trusted yet.
+  Future<rust.NodeInfoOut> probeNode(String url) => rust.nodeInfo(url: url.trim());
+
+  /// Pin the node's key and ask its operator to trust us. Connects as soon as they do.
+  Future<Node> addNode(String url, rust.NodeInfoOut info, {String? note}) async {
+    final me = identity!;
+    final node = Node(
+      url: url.trim(),
+      keyString: info.keyString,
+      instanceId: info.instanceId,
+      name: info.name ?? info.instanceId.substring(0, 8),
+    );
+    final p = await rust.nodePair(url: node.url, name: me.name, seedsB64: me.seedsB64, note: note);
+    node.paired = p.alreadyTrusted;
+    nodes.removeWhere((n) => n.instanceId == node.instanceId);
+    nodes.add(node);
+    await store.writeNodes(nodes.map((n) => n.toJson()).toList());
+    final c = contacts.putIfAbsent(
+      node.instanceId,
+      () => Contact(instanceId: node.instanceId, name: node.name, keyString: node.keyString, isNode: true),
+    );
+    c.isNode = true;
+    c.name = node.name;
+    c.keyString = node.keyString;
+    unawaited(store.writeContacts(contacts.values.map((c) => c.toJson()).toList()));
+    nodeStatus[node.instanceId] = node.paired ? 'Connecting…' : 'Waiting for the operator to accept…';
+    notifyListeners();
+    unawaited(connectNode(node));
+    return node;
+  }
+
+  Future<void> removeNode(Node node) async {
+    await _closeNode(node.instanceId, 'forgotten');
+    nodes.removeWhere((n) => n.instanceId == node.instanceId);
+    nodeStatus.remove(node.instanceId);
+    await store.writeNodes(nodes.map((n) => n.toJson()).toList());
+    notifyListeners();
+  }
+
+  Future<void> connectNode(Node node) async {
+    final me = identity;
+    if (me == null || !_foreground || _nodeSessions.containsKey(node.instanceId)) return;
+    nodeStatus[node.instanceId] = 'Connecting…';
+    notifyListeners();
+    try {
+      final s = await rust.nodeConnect(
+        url: node.url,
+        nodeKeyString: node.keyString,
+        name: me.name,
+        seedsB64: me.seedsB64,
+      );
+      _nodeSessions[node.instanceId] = s;
+      if (!node.paired) {
+        node.paired = true;
+        await store.writeNodes(nodes.map((n) => n.toJson()).toList());
+      }
+      final c = contacts.putIfAbsent(
+        node.instanceId,
+        () => Contact(instanceId: node.instanceId, name: node.name, keyString: node.keyString, isNode: true),
+      );
+      c.isNode = true;
+      c.sealed = s.seals();
+      c.reachable = true;
+      _nodeEvents[node.instanceId] = s.events().listen(
+        (e) => _onNodeEvent(node, e),
+        onError: (_) => _nodeLost(node, 'event stream failed'),
+      );
+    } catch (e) {
+      final msg = e.toString();
+      if (msg.contains('not trusted')) {
+        nodeStatus[node.instanceId] = 'Waiting for the operator to accept…';
+      } else {
+        nodeStatus[node.instanceId] = 'Could not connect: ${_short(e)}';
+      }
+      _scheduleNodeRetry();
+    }
+    notifyListeners();
+  }
+
+  void _onNodeEvent(Node node, rust.SessionEvent e) {
+    switch (e) {
+      case rust.SessionEvent_Connected(:final hubName):
+        node.name = hubName;
+        final c = contacts[node.instanceId];
+        if (c != null) {
+          c.connected = true;
+          c.name = hubName;
+        }
+        nodeStatus[node.instanceId] = 'Connected';
+        notifyListeners();
+        unawaited(_flushNodeOutbox(node.instanceId));
+      case rust.SessionEvent_Disconnected(:final reason):
+        _nodeLost(node, reason);
+      case rust.SessionEvent_Chat(:final from, :final fromName, :final text, :final sentAt, :final id):
+        _onChat(from, fromName, text, sentAt, id);
+      default:
+        break;
+    }
+  }
+
+  void _nodeLost(Node node, String reason) {
+    _nodeEvents.remove(node.instanceId)?.cancel();
+    _nodeSessions.remove(node.instanceId);
+    contacts[node.instanceId]?.connected = false;
+    nodeStatus[node.instanceId] = 'Disconnected: $reason';
+    notifyListeners();
+    _scheduleNodeRetry();
+  }
+
+  Future<void> _closeNode(String id, String reason) async {
+    await _nodeEvents.remove(id)?.cancel();
+    final s = _nodeSessions.remove(id);
+    if (s != null) await s.close();
+    contacts[id]?.connected = false;
+    nodeStatus[id] = reason;
+    notifyListeners();
+  }
+
+  void _scheduleNodeRetry() {
+    _nodeRetry?.cancel();
+    if (!_foreground) return;
+    _nodeRetry = Timer(const Duration(seconds: 15), () {
+      for (final n in nodes) {
+        if (!_nodeSessions.containsKey(n.instanceId)) unawaited(connectNode(n));
+      }
+    });
+  }
+
+  /// Deliver what waited for a direct node, now that its link is up.
+  Future<void> _flushNodeOutbox(String nodeId) async {
+    final s = _nodeSessions[nodeId];
+    if (s == null) return;
+    for (final e in rust.outboxList(outboxJson: outboxJson).where((e) => e.to == nodeId)) {
+      final v = s.sendChat(text: e.text, sentAt: e.sentAt);
+      if (v is rust.SendVerdict_Delivered || v is rust.SendVerdict_Legacy) {
+        outboxJson = rust.outboxRemove(outboxJson: outboxJson, ref: e.ref);
+        for (final m in transcripts[nodeId] ?? const <Msg>[]) {
+          if (m.ref == e.ref) m.held = false;
+        }
+      } else {
+        break;
+      }
+    }
+    await store.writeOutbox(outboxJson);
+    final t = transcripts[nodeId];
+    if (t != null) await store.writeTranscript(nodeId, t.map((m) => m.toJson()).toList());
+    notifyListeners();
+  }
+
   // ── actions ──
 
   /// Send, or hold. Returns a short status for the UI.
   Future<String?> send(String to, String text) async {
-    final s = _session;
     final ts = _now();
     final contact = contacts[to];
+    final node = _nodeSessions[to];
+    if (node != null) {
+      final v = node.sendChat(text: text, sentAt: ts);
+      switch (v) {
+        case rust.SendVerdict_Delivered() || rust.SendVerdict_Legacy():
+          _append(to, Msg(id: 'out-$ts', out: true, text: text, ts: ts));
+          notifyListeners();
+          return null;
+        case rust.SendVerdict_Held():
+          _hold(to, contact?.name ?? to, text, ts);
+          return 'Held until the link is back';
+        case rust.SendVerdict_Refused(:final reason):
+          _hold(to, contact?.name ?? to, text, ts);
+          return 'Held: $reason';
+      }
+    }
+    if (contact?.isNode == true) {
+      _hold(to, contact?.name ?? to, text, ts);
+      return '${contact?.name ?? 'That node'} is not reachable — held until it is';
+    }
+    final s = _session;
     if (s == null || !connected) {
       _hold(to, contact?.name ?? to, text, ts);
       return 'Not connected — held until you are';
@@ -452,14 +699,18 @@ class AppState extends ChangeNotifier {
   int _now() => DateTime.now().millisecondsSinceEpoch;
 
   String _short(Object e) {
-    final s = e.toString();
+    final s = e.toString().replaceFirst('Exception: ', '');
     return s.length > 160 ? '${s.substring(0, 160)}…' : s;
   }
 
   @override
   void dispose() {
     _reconnect?.cancel();
+    _nodeRetry?.cancel();
     _events?.cancel();
+    for (final s in _nodeEvents.values) {
+      s.cancel();
+    }
     super.dispose();
   }
 }

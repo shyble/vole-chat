@@ -48,6 +48,8 @@ pub enum ClientError {
 	UnknownPeer(String),
 	#[error("member {0} announces no sealing key")]
 	NoSealKey(String),
+	#[error("the node has not accepted this identity yet")]
+	NotTrusted,
 }
 
 /// What `POST /volenet/join` gave us. Pin `hub_key_string`; it is the hub from now on.

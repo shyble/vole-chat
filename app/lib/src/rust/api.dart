@@ -72,6 +72,54 @@ List<OutboxItem> outboxList({required String outboxJson}) =>
 String outboxRemove({required String outboxJson, required String ref}) =>
     RustLib.instance.api.crateApiOutboxRemove(outboxJson: outboxJson, ref: ref);
 
+/// Fingerprint a node by URL before trusting it.
+Future<NodeInfoOut> nodeInfo({required String url}) =>
+    RustLib.instance.api.crateApiNodeInfo(url: url);
+
+/// Ask the node's operator to trust this identity.
+Future<PairOutcomeOut> nodePair({
+  required String url,
+  required String name,
+  required String seedsB64,
+  String? note,
+}) => RustLib.instance.api.crateApiNodePair(
+  url: url,
+  name: name,
+  seedsB64: seedsB64,
+  note: note,
+);
+
+/// Connect straight to a node. Fails with a message starting `not trusted` until its operator
+/// has accepted the pair request — keep the node listed and retry while the app is open.
+Future<NodeSession> nodeConnect({
+  required String url,
+  required String nodeKeyString,
+  required String name,
+  required String seedsB64,
+}) => RustLib.instance.api.crateApiNodeConnect(
+  url: url,
+  nodeKeyString: nodeKeyString,
+  name: name,
+  seedsB64: seedsB64,
+);
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NodeSession>>
+abstract class NodeSession implements RustOpaqueInterface {
+  Future<void> close();
+
+  Stream<SessionEvent> events();
+
+  bool isConnected();
+
+  String nodeInstanceId();
+
+  String nodeName();
+
+  bool seals();
+
+  SendVerdict sendChat({required String text, PlatformInt64? sentAt});
+}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Session>>
 abstract class Session implements RustOpaqueInterface {
   /// Accept a member's chat from now on. The app persists the consent list.
@@ -248,6 +296,37 @@ class MemberInfo {
           reachable == other.reachable;
 }
 
+class NodeInfoOut {
+  final String keyString;
+  final String instanceId;
+  final String? name;
+  final bool postQuantum;
+
+  const NodeInfoOut({
+    required this.keyString,
+    required this.instanceId,
+    this.name,
+    required this.postQuantum,
+  });
+
+  @override
+  int get hashCode =>
+      keyString.hashCode ^
+      instanceId.hashCode ^
+      name.hashCode ^
+      postQuantum.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NodeInfoOut &&
+          runtimeType == other.runtimeType &&
+          keyString == other.keyString &&
+          instanceId == other.instanceId &&
+          name == other.name &&
+          postQuantum == other.postQuantum;
+}
+
 class NoticeInfo {
   final String from;
   final String fromName;
@@ -338,6 +417,24 @@ class OutboxItem {
           text == other.text &&
           sentAt == other.sentAt &&
           attempts == other.attempts;
+}
+
+class PairOutcomeOut {
+  final bool alreadyTrusted;
+  final bool queued;
+
+  const PairOutcomeOut({required this.alreadyTrusted, required this.queued});
+
+  @override
+  int get hashCode => alreadyTrusted.hashCode ^ queued.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PairOutcomeOut &&
+          runtimeType == other.runtimeType &&
+          alreadyTrusted == other.alreadyTrusted &&
+          queued == other.queued;
 }
 
 class PeerInfo {

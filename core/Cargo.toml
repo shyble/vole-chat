@@ -31,3 +31,7 @@ anyhow = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+[lints.rust]
+# flutter_rust_bridge marks generated items with cfg(frb_expand)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

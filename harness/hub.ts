@@ -34,11 +34,15 @@ let member: VoleNetManager | null = null
 let memberId = ''
 let hubKey = ''
 
+// peer-b is also reachable directly (a phone can dial it, as it would dial an agent), and
+// publishes its name so /volenet/info can be fingerprinted by name.
 const memberCfg = () => ({
 	enabled: true,
 	instanceName: 'peer-b',
 	role: 'peer' as const,
 	port: MEMBER,
+	hostname: '127.0.0.1',
+	publishNames: true,
 	peers: [{ url: hubUrl, trust: 'full' as const }],
 	relay: { acceptFrom: '*' as const },
 })
@@ -54,6 +58,7 @@ async function startMember(): Promise<void> {
 	forward('volenet:chat:queued')
 	forward('volenet:chat:flushed')
 	forward('volenet:chat:pending')
+	forward('volenet:pair:request')
 	member = new VoleNetManager(memberCfg(), rootB)
 	await member.start(undefined, bus)
 	out({ ev: 'member-started' })
@@ -91,7 +96,16 @@ async function main(): Promise<void> {
 		if ((hub as any).transport.isPeerConnected(memberId)) break
 		await new Promise((r) => setTimeout(r, 150))
 	}
-	out({ ev: 'ready', hubUrl, hubKey, hubId: kh.instanceId, memberId, memberName: 'peer-b' })
+	out({
+		ev: 'ready',
+		hubUrl,
+		hubKey,
+		hubId: kh.instanceId,
+		memberId,
+		memberName: 'peer-b',
+		memberUrl: `http://127.0.0.1:${MEMBER}`,
+		memberKey: kb.publicKeyString,
+	})
 
 	const rl = readline.createInterface({ input: process.stdin })
 	for await (const line of rl) {
@@ -131,6 +145,12 @@ async function main(): Promise<void> {
 					break
 				case 'pending':
 					out({ ev: 'pending-list', pending: member!.getChatPending() })
+					break
+				case 'pair-list':
+					out({ ev: 'pair-list', requests: member!.listPairRequests() })
+					break
+				case 'pair-accept':
+					out({ ev: 'pair-accept-result', ...(await member!.acceptPair(c.to)) })
 					break
 				case 'exit':
 					await member?.stop()

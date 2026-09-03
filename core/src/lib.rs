@@ -11,6 +11,7 @@
 //! - [`message`]   signed messages: create and verify (§2)
 //! - [`seal`]      hybrid X25519 + ML-KEM-768 sealed envelopes (§3)
 //! - [`client`]    a hub session: join, announce, roster, relayed chat, consent, notices (§4–§7)
+//! - [`node`]      a direct session with one node, no hub: pair, connect, sealed chat
 //! - [`outbox`]    what waits for someone who is away, and when it goes (§7, §8)
 
 pub mod api;
@@ -19,6 +20,7 @@ pub mod client;
 pub mod der;
 pub mod keys;
 pub mod message;
+pub mod node;
 pub mod outbox;
 pub mod seal;
 #[allow(clippy::all, unused_imports, unused_variables, dead_code)]
@@ -26,6 +28,7 @@ mod frb_generated;
 
 pub use client::{Event, HubClient, JoinInfo, Member, Notice, Verdict};
 pub use keys::{Identity, PeerKeys};
+pub use node::{node_info, node_pair, DirectClient, NodeInfo, PairOutcome};
 pub use outbox::{Outbox, OutboxEntry};
 pub use message::Message;
 pub use seal::SealedBox;

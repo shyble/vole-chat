@@ -36,6 +36,12 @@ class Store {
   Future<void> writeHubs(List<Map<String, dynamic>> hubs) =>
       _secure.write(key: 'hubs', value: jsonEncode({'list': hubs}));
 
+  Future<List<Map<String, dynamic>>> readNodes() async =>
+      ((await _readJsonSecure('nodes') ?? const {})['list'] as List<dynamic>? ?? const [])
+          .cast<Map<String, dynamic>>();
+  Future<void> writeNodes(List<Map<String, dynamic>> nodes) =>
+      _secure.write(key: 'nodes', value: jsonEncode({'list': nodes}));
+
   Future<List<String>> readConsents() async =>
       ((await _readJsonSecure('consents') ?? const {})['list'] as List<dynamic>? ?? const [])
           .cast<String>();
