@@ -357,6 +357,13 @@ impl HubClient {
 		self.inner.consents.lock().unwrap().insert(instance_id.to_string());
 	}
 
+	/// Stop accepting them, and forget the card that pinned them. Their next message is held
+	/// as a fresh request, which is what removing someone should mean.
+	pub fn revoke(&self, instance_id: &str) {
+		self.inner.consents.lock().unwrap().remove(instance_id);
+		self.inner.pinned.lock().unwrap().remove(instance_id);
+	}
+
 	/// §7: seal a chat message to a member and send it via the hub. `sent_at` is when it was
 	/// written — pass the original time when re-sending from the outbox.
 	pub async fn send_chat(&self, to: &str, text: &str, sent_at: Option<i64>) -> Verdict {

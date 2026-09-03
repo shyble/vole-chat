@@ -19,6 +19,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 const PORTS_EARLY: (u16, u16) = (19971, 19972);
 const PORTS_BOTH: (u16, u16) = (19969, 19970);
 const PORTS_UNACCEPTED: (u16, u16) = (19967, 19968);
+const PORTS_DOUBLE: (u16, u16) = (19965, 19966);
 
 struct Hub {
 	child: Child,
@@ -180,4 +181,36 @@ async fn a_message_from_someone_unaccepted_surfaces_as_a_request_not_a_chat() {
 	assert!(matches!(&ev, Event::ConnectRequest { from, .. } if from == a.instance_id()), "{ev:?}");
 	ca.close().await;
 	cb.close().await;
+}
+
+/// Two sessions from one identity, which is what the app did when scanning a card also joined
+/// a hub: the join connected, and applying the pinned card connected again before the first
+/// had finished. The hub keeps one socket per peer and drops the other — which one depends on
+/// how the two instance ids compare, so one phone would work and the other would not.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_session_from_the_same_identity_leaves_one_of_them_deaf() {
+	let tmp = tempfile::tempdir().unwrap();
+	let hub = Hub::spawn(tmp.path(), PORTS_DOUBLE);
+	let me = Arc::new(Identity::generate("double"));
+	let other = Arc::new(Identity::generate("other"));
+	HubClient::join(&hub.url, &me).await.expect("join");
+	HubClient::join(&hub.url, &other).await.expect("other joins");
+
+	let (first, _r1) = HubClient::connect(&hub.url, &hub.key, me.clone(), [], []).await.expect("first");
+	let (second, _r2) = HubClient::connect(&hub.url, &hub.key, me.clone(), [], []).await.expect("second");
+	// Give the hub time to bind, roster, and resolve the duplicate.
+	let (_o, _ro) = HubClient::connect(&hub.url, &hub.key, other.clone(), [], []).await.expect("other");
+	tokio::time::sleep(Duration::from_secs(3)).await;
+
+	// Both sessions believe they are up, because each opened a socket and got a reply. But only
+	// one of them is the socket the hub kept, so only one is ever told who is there.
+	let saw_first = first.member(other.instance_id()).is_some();
+	let saw_second = second.member(other.instance_id()).is_some();
+	assert!(
+		!(saw_first && saw_second),
+		"the hub keeps one socket per peer, so two sessions cannot both be served"
+	);
+	assert!(saw_first || saw_second, "one of them should have been served");
+	first.close().await;
+	second.close().await;
 }

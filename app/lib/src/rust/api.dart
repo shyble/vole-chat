@@ -165,6 +165,9 @@ abstract class Reachable implements RustOpaqueInterface {
 
   Stream<SessionEvent> events();
 
+  /// Stop trusting a caller entirely.
+  void forget({required String instanceId});
+
   bool isListening();
 
   int port();
@@ -217,6 +220,9 @@ abstract class Session implements RustOpaqueInterface {
   List<NoticeInfo> pending();
 
   Future<SendVerdict> requestConnect({required String to, String? note});
+
+  /// Stop accepting them, and forget their pinned card.
+  void revoke({required String instanceId});
 
   List<MemberInfo> roster();
 

@@ -230,6 +230,12 @@ impl Session {
 		self.client.accept(&instance_id)
 	}
 
+	/// Stop accepting them, and forget their pinned card.
+	#[frb(sync)]
+	pub fn revoke(&self, instance_id: String) {
+		self.client.revoke(&instance_id)
+	}
+
 	pub async fn send_chat(&self, to: String, text: String, sent_at: Option<i64>) -> SendVerdict {
 		verdict(self.client.send_chat(&to, &text, sent_at).await)
 	}
@@ -510,6 +516,12 @@ impl Reachable {
 	#[frb(sync)]
 	pub fn deny(&self, instance_id: String) {
 		self.listener.deny(&instance_id)
+	}
+
+	/// Stop trusting a caller entirely.
+	#[frb(sync)]
+	pub fn forget(&self, instance_id: String) {
+		self.listener.forget(&instance_id)
 	}
 
 	#[frb(sync)]

@@ -169,6 +169,10 @@ class AppState extends ChangeNotifier {
   String? status;
   String? viewing;
   Timer? _reconnect;
+  /// Connecting and disconnecting run one after another, never at once. Two connects racing
+  /// leaves two sockets from one identity, and a hub keeps only one per peer — so the session
+  /// the app is holding can be the one that was dropped: connected, and told nothing.
+  Future<void> _sessionOps = Future<void>.value();
 
   /// Being reachable: another phone (or an agent) dials us instead.
   rust.Reachable? _reachable;
@@ -295,7 +299,7 @@ class AppState extends ChangeNotifier {
       await disconnect();
       activeHub = hubs.firstOrNull;
       await store.setActiveHub(activeHub?.url);
-      if (activeHub != null) unawaited(connect());
+      if (activeHub != null) await connect();
     }
     notifyListeners();
   }
@@ -305,12 +309,22 @@ class AppState extends ChangeNotifier {
     activeHub = hub;
     await store.setActiveHub(hub.url);
     notifyListeners();
-    unawaited(connect());
+    await connect();
   }
 
   // ── hub session ──
 
-  Future<void> connect() async {
+  Future<void> connect() => _queue(_connect);
+
+  Future<void> disconnect() => _queue(_disconnect);
+
+  Future<void> _queue(Future<void> Function() op) {
+    final next = _sessionOps.then((_) => op(), onError: (_) => op());
+    _sessionOps = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
+  Future<void> _connect() async {
     final hub = activeHub;
     final me = identity;
     if (hub == null || me == null || _session != null || !_foreground) return;
@@ -336,7 +350,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> disconnect() async {
+  Future<void> _disconnect() async {
     _reconnect?.cancel();
     await _events?.cancel();
     _events = null;
@@ -505,7 +519,8 @@ class AppState extends ChangeNotifier {
         return '${card.name} added, but their hub could not be joined: ${_short(e)}';
       }
     }
-    // Reconnect so the pinned keys are in force for this session.
+    // The pinned keys are handed over at connect time, so the session has to be renewed —
+    // once, after any hub join above has finished, or the two race.
     if (activeHub != null) {
       await disconnect();
       await connect();
@@ -890,6 +905,52 @@ class AppState extends ChangeNotifier {
     } else {
       await _session?.deny(to: id);
     }
+    notifyListeners();
+  }
+
+  /// Forget someone completely: the conversation, their pinned code, the consent each way, and
+  /// anything still waiting for them. Adding them again starts from nothing, which is the point.
+  Future<void> removeContact(String id) async {
+    final contact = contacts.remove(id);
+    transcripts.remove(id);
+    unread.remove(id);
+    pending.remove(id);
+    requests.remove(id);
+    consents.remove(id);
+    cards.remove(id);
+    _wantConnect.remove(id);
+    callerKeys.removeWhere((k) {
+      try {
+        return rust.keyStringParse(keyString: k).instanceId == id;
+      } catch (_) {
+        return false;
+      }
+    });
+
+    // Anything held for them goes too — it was addressed to a contact that no longer exists.
+    for (final e in rust.outboxList(outboxJson: outboxJson).where((e) => e.to == id)) {
+      outboxJson = rust.outboxRemove(outboxJson: outboxJson, ref: e.ref);
+    }
+
+    _session?.revoke(instanceId: id);
+    _reachable?.forget(instanceId: id);
+    if (contact?.isNode == true) {
+      final node = nodes.where((n) => n.instanceId == id).firstOrNull;
+      if (node != null) await removeNode(node);
+    }
+
+    await Future.wait([
+      store.writeContacts(contacts.values.map((c) => c.toJson()).toList()),
+      store.deleteTranscript(id),
+      store.setUnread(unread),
+      store.writePending(pending.values.map((n) => n.toJson()).toList()),
+      store.writeRequests(requests.toList()),
+      store.writeConsents(consents.toList()),
+      store.writeCards(cards.values.toList()),
+      store.writeCallers(callerKeys.toList()),
+      store.writeOutbox(outboxJson),
+    ]);
+    if (viewing == id) viewing = null;
     notifyListeners();
   }
 

@@ -51,6 +51,33 @@ class _ChatPageState extends State<ChatPage> {
         _jump();
         return Scaffold(
           appBar: AppBar(
+            actions: [
+              PopupMenuButton<String>(
+                onSelected: (v) async {
+                  if (v != 'remove') return;
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: Text('Remove $name?'),
+                      content: const Text(
+                        'This deletes the conversation, forgets their code, and withdraws consent '
+                        'each way. They would have to ask again, and so would you.',
+                      ),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+                      ],
+                    ),
+                  );
+                  if (ok != true || !context.mounted) return;
+                  await s.removeContact(widget.peerId);
+                  if (context.mounted) Navigator.of(context).pop();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'remove', child: Text('Remove contact')),
+                ],
+              ),
+            ],
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

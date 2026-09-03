@@ -102,6 +102,11 @@ class Store {
           .cast<Map<String, dynamic>>();
   Future<void> writeTranscript(String peerId, List<Map<String, dynamic>> msgs) =>
       _writeJsonFile('transcripts/$peerId.json', msgs);
+  Future<void> deleteTranscript(String peerId) async {
+    final f = File('${_dir.path}/transcripts/$peerId.json');
+    if (await f.exists()) await f.delete();
+  }
+
   Future<List<String>> transcriptPeers() async {
     final d = Directory('${_dir.path}/transcripts');
     return [

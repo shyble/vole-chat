@@ -146,6 +146,13 @@ impl Listener {
 		self.shared.requests.lock().unwrap().retain(|r| r.instance_id != instance_id);
 	}
 
+	/// Stop trusting a caller: drop their socket and any pending request. Reaching us again
+	/// means asking again.
+	pub fn forget(&self, instance_id: &str) {
+		self.shared.callers.lock().unwrap().remove(instance_id);
+		self.deny(instance_id);
+	}
+
 	/// Everyone accepted, and whether their socket is up right now.
 	pub fn callers(&self) -> Vec<(String, String, bool)> {
 		self.shared
