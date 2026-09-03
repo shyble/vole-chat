@@ -10,14 +10,20 @@
 //! - [`canonical`] the JSON canonicalization every signature covers (§2)
 //! - [`message`]   signed messages: create and verify (§2)
 //! - [`seal`]      hybrid X25519 + ML-KEM-768 sealed envelopes (§3)
+//! - [`client`]    a hub session: join, announce, roster, relayed chat, consent, notices (§4–§7)
+//! - [`outbox`]    what waits for someone who is away, and when it goes (§7, §8)
 
 pub mod canonical;
+pub mod client;
 pub mod der;
 pub mod keys;
 pub mod message;
+pub mod outbox;
 pub mod seal;
 
+pub use client::{Event, HubClient, JoinInfo, Member, Notice, Verdict};
 pub use keys::{Identity, PeerKeys};
+pub use outbox::{Outbox, OutboxEntry};
 pub use message::Message;
 pub use seal::SealedBox;
 

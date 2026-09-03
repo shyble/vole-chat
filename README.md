@@ -35,6 +35,6 @@ cd app && flutter run
 ## Status
 
 - [x] Identity, canonical signing, sealed envelopes — interoperating with OpenVole core
-- [ ] Hub client: join, announce, roster, relay, consent, outbox, notices — tested against a real hub process
+- [x] Hub client: join, announce, roster, relay, consent, outbox, notices — tested against a real hub and member (`core/tests/hub.rs`)
 - [ ] Flutter app over the bridge: onboarding, hubs, contacts, chat, key backup
 - [ ] Store builds
