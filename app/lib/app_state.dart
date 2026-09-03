@@ -179,6 +179,10 @@ class AppState extends ChangeNotifier {
   final Set<String> callerKeys = {};
   /// Cards we scanned, by instance id — their keys pinned by us, not vouched by a hub.
   final Map<String, String> cards = {};
+  /// People we want to connect with, waiting for the hub to say they exist. Asking before the
+  /// roster arrives reaches nobody: the session does not yet know the member, so the request
+  /// is refused locally and the other side never hears of it.
+  final Map<String, String?> _wantConnect = {};
 
   final Map<String, rust.NodeSession> _nodeSessions = {};
   final Map<String, StreamSubscription<rust.SessionEvent>> _nodeEvents = {};
@@ -390,6 +394,7 @@ class AppState extends ChangeNotifier {
         _bump(from);
         notifyListeners();
       case rust.SessionEvent_ConnectAccepted(:final from, :final fromName):
+        _wantConnect.remove(from);
         _ensureContact(from, fromName);
         _append(from, Msg(id: 'acc-${_now()}', out: false, text: '$fromName accepted your request', ts: _now(), system: true));
         notifyListeners();
@@ -426,7 +431,25 @@ class AppState extends ChangeNotifier {
     }
     unawaited(store.writeContacts(contacts.values.map((c) => c.toJson()).toList()));
     notifyListeners();
+    _flushWanted();
     unawaited(flushOutbox());
+  }
+
+  /// Send the connect requests we were holding for people the hub has now listed.
+  void _flushWanted() {
+    final s = _session;
+    if (s == null || !connected || _wantConnect.isEmpty) return;
+    final known = s.roster().map((m) => m.instanceId).toSet();
+    for (final id in _wantConnect.keys.toList()) {
+      if (!known.contains(id)) continue;
+      final note = _wantConnect.remove(id);
+      unawaited(() async {
+        final problem = await requestConnect(id, note: note);
+        final name = contacts[id]?.name ?? id;
+        status = problem == null ? 'Asked $name to connect' : 'Could not ask $name: $problem';
+        notifyListeners();
+      }());
+    }
   }
 
   void _onChat(String from, String fromName, String text, int sentAt, String id) {
@@ -470,11 +493,14 @@ class AppState extends ChangeNotifier {
     unawaited(store.writeContacts(contacts.values.map((x) => x.toJson()).toList()));
     notifyListeners();
 
-    // A card can name a hub, so scanning one is enough to go from nothing to chatting.
+    // A card can name a hub, so scanning one is enough to go from nothing to chatting. That
+    // registers your key with that hub, so say plainly when it happens.
     final hub = card.hub;
+    var joined = false;
     if (hub != null && !hubs.any((h) => h.url == hub)) {
       try {
         await addHub(hub);
+        joined = true;
       } catch (e) {
         return '${card.name} added, but their hub could not be joined: ${_short(e)}';
       }
@@ -484,13 +510,15 @@ class AppState extends ChangeNotifier {
       await disconnect();
       await connect();
     }
+    // Ask as soon as the hub tells us they exist, not before.
     if (!consents.contains(card.instanceId)) {
-      final note = await requestConnect(card.instanceId, note: 'scanned your card');
-      if (note != null) return '${card.name} added. $note';
+      _wantConnect[card.instanceId] = 'scanned your card';
+      _flushWanted();
     }
+    final where = joined ? ' You joined their hub, ${hubs.last.name}.' : '';
     return card.seals
-        ? '${card.name} added — their keys are pinned, so no hub can read or impersonate.'
-        : '${card.name} added from an identity-only code; sealing keys still come from the hub.';
+        ? '${card.name} added — their keys are pinned, so no hub can read or impersonate.$where'
+        : '${card.name} added from an identity-only code; sealing keys still come from the hub.$where';
   }
 
   Future<void> forgetCard(String instanceId) async {
@@ -845,7 +873,12 @@ class AppState extends ChangeNotifier {
     consents.add(id);
     await store.writeConsents(consents.toList());
     _session?.accept(instanceId: id);
-    await _session?.approve(to: id);
+    final v = await _session?.approve(to: id);
+    // Approving before the roster names them lands nowhere; hold it and send when it does.
+    if (v is rust.SendVerdict_Refused) {
+      _wantConnect[id] = null;
+      _flushWanted();
+    }
     notifyListeners();
   }
 
