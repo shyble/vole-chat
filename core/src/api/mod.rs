@@ -106,6 +106,8 @@ pub enum SessionEvent {
 	ConnectAccepted { from: String, from_name: String },
 	ConnectDenied { from: String, from_name: String },
 	Pending { notices: Vec<NoticeInfo> },
+	/// An agent's brain answered. Direct links only — a hub relays nothing executable.
+	BrainReply { task_id: String, text: String, failed: bool },
 }
 
 pub enum SendVerdict {
@@ -148,6 +150,7 @@ fn session_event(e: Event) -> SessionEvent {
 		Event::ConnectAccepted { from, from_name } => SessionEvent::ConnectAccepted { from, from_name },
 		Event::ConnectDenied { from, from_name } => SessionEvent::ConnectDenied { from, from_name },
 		Event::Pending(n) => SessionEvent::Pending { notices: n.iter().map(notice_info).collect() },
+		Event::BrainReply { task_id, text, failed } => SessionEvent::BrainReply { task_id, text, failed },
 	}
 }
 
@@ -476,6 +479,20 @@ impl NodeSession {
 	#[frb(sync)]
 	pub fn send_chat(&self, text: String, sent_at: Option<i64>) -> SendVerdict {
 		verdict(self.client.send_chat(&text, sent_at))
+	}
+
+	/// Ask this agent's brain rather than leaving a message for whoever runs it. Returns the id
+	/// the answer will carry; it arrives as a BrainReply event, and can take as long as a model
+	/// takes. The agent refuses unless its operator has granted this identity brain access.
+	#[frb(sync)]
+	pub fn ask_brain(&self, text: String) -> anyhow::Result<String> {
+		self.client.ask_brain(&text).map_err(|e| anyhow::anyhow!("{e}"))
+	}
+
+	/// Whether this link can carry a brain request at all.
+	#[frb(sync)]
+	pub fn can_ask_brain(&self) -> bool {
+		self.client.is_connected() && self.client.has_brain()
 	}
 
 	pub async fn close(&self) {

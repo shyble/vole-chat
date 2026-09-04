@@ -236,6 +236,17 @@ void main() {
       h.cmd({'cmd': 'send', 'to': me.instanceId, 'text': 'direct back'});
       final chat = await events.firstWhere((e) => e is SessionEvent_Chat, const Duration(seconds: 15)) as SessionEvent_Chat;
       expect(chat.text, 'direct back');
+
+      // Past the operator, to the agent itself. Brain access is off until its operator grants
+      // it, so what comes back is a refusal naming the setting — which is what the app shows.
+      expect(node.canAskBrain(), isTrue, reason: 'an agent announces itself as one');
+      final asked = node.askBrain(text: 'what are you working on?');
+      final reply = await events.firstWhere((e) => e is SessionEvent_BrainReply, const Duration(seconds: 25))
+          as SessionEvent_BrainReply;
+      expect(reply.taskId, asked);
+      expect(reply.failed, isTrue);
+      expect(reply.text, contains('allowBrain'));
+
       await node.close();
     } finally {
       await h.stop();

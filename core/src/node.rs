@@ -107,6 +107,8 @@ struct Inner {
 	node_name: Mutex<String>,
 	node_x: Option<String>,
 	node_mlkem: Option<String>,
+	/// The other end announced itself as a chat client, so it has no brain to ask.
+	node_is_client: bool,
 	tx: mpsc::UnboundedSender<String>,
 	events: mpsc::UnboundedSender<Event>,
 	seen: Mutex<HashMap<String, i64>>,
@@ -166,6 +168,7 @@ impl DirectClient {
 		let socket_base = if advertised.starts_with("http") { advertised } else { base.clone() };
 		let node_x = reply.payload["xPublicKey"].as_str().map(str::to_string);
 		let node_mlkem = reply.payload["mlkemPublicKey"].as_str().map(str::to_string);
+		let node_is_client = reply.payload["kind"].as_str() == Some("client");
 
 		let (ws, _) = tokio_tungstenite::connect_async(ws_url(&socket_base))
 			.await
@@ -179,6 +182,7 @@ impl DirectClient {
 			node_name: Mutex::new(node_name.clone()),
 			node_x,
 			node_mlkem,
+			node_is_client,
 			tx,
 			events,
 			seen: Mutex::new(HashMap::new()),
@@ -258,6 +262,40 @@ impl DirectClient {
 		self.inner.node_x.is_some()
 	}
 
+	/// Whether the other end is an agent at all. Another phone announces itself as a client;
+	/// asking it to think would go unanswered but for the refusal it sends back.
+	pub fn has_brain(&self) -> bool {
+		!self.inner.node_is_client
+	}
+
+	/// Ask the node's **brain**, rather than leaving a message for whoever runs it.
+	///
+	/// This is `task:delegate` with a `fromName`, which is what one agent sends another: the
+	/// node frames it as a peer message, runs it through its own brain in a session kept per
+	/// peer — so the conversation has continuity — and answers with `task:result`.
+	///
+	/// The node decides whether to allow it. Until its operator sets `allowBrain: true` for this
+	/// identity, the answer is a refusal saying so. An answer can take as long as a model takes,
+	/// and arrives as [`Event::BrainReply`] carrying the id returned here.
+	pub fn ask_brain(&self, text: &str) -> Result<String, ClientError> {
+		let inner = &self.inner;
+		if inner.closed.load(Ordering::SeqCst) {
+			return Err(ClientError::NotConnected);
+		}
+		if inner.node_is_client {
+			return Err(ClientError::Refused("that is a chat app, not an agent — it has no brain".into()));
+		}
+		let task_id = uuid::Uuid::new_v4().to_string();
+		let msg = Message::create(
+			&inner.me,
+			"task:delegate",
+			&inner.node.instance_id,
+			json!({ "taskId": task_id, "input": text, "fromName": inner.me.name }),
+		);
+		inner.send_wrapped(&msg);
+		Ok(task_id)
+	}
+
 	/// Chat straight to the node. There is no verdict for direct delivery: a successful write to
 	/// a live socket is the delivery, as it is between agents.
 	pub fn send_chat(&self, text: &str, sent_at: Option<i64>) -> Verdict {
@@ -271,17 +309,7 @@ impl DirectClient {
 			&inner.node.instance_id,
 			json!({ "text": text, "fromName": inner.me.name, "sentAt": sent_at.unwrap_or_else(now_ms) }),
 		);
-		let wire = match &inner.node_x {
-			Some(x) => {
-				let aad = format!("{}|{}", inner.me.instance_id(), inner.node.instance_id);
-				match seal(x, inner.node_mlkem.as_deref(), msg.to_json().as_bytes(), &aad) {
-					Ok(sealed) => Message::create(&inner.me, "sealed:direct", &inner.node.instance_id, json!({ "box": sealed })),
-					Err(e) => return Verdict::Refused(format!("seal: {e}")),
-				}
-			}
-			None => msg,
-		};
-		if inner.tx.send(wire.to_json()).is_err() {
+		if !inner.send_wrapped(&msg) {
 			return Verdict::Refused("not connected".into());
 		}
 		Verdict::Delivered
@@ -299,6 +327,23 @@ impl DirectClient {
 impl Inner {
 	fn send(&self, m: &Message) {
 		let _ = self.tx.send(m.to_json());
+	}
+
+	/// Send sealed when the node announced sealing keys, plain when it is older.
+	fn send_wrapped(&self, m: &Message) -> bool {
+		let wire = match &self.node_x {
+			Some(x) => {
+				let aad = format!("{}|{}", self.me.instance_id(), self.node.instance_id);
+				match seal(x, self.node_mlkem.as_deref(), m.to_json().as_bytes(), &aad) {
+					Ok(sealed) => {
+						Message::create(&self.me, "sealed:direct", &self.node.instance_id, json!({ "box": sealed }))
+					}
+					Err(_) => return false,
+				}
+			}
+			None => m.clone(),
+		};
+		self.tx.send(wire.to_json()).is_ok()
 	}
 
 	fn disconnect(&self, reason: &str) {
@@ -329,6 +374,16 @@ impl Inner {
 					_ => msg.timestamp,
 				};
 				let _ = self.events.send(Event::Chat { from: msg.from.clone(), from_name, text: text.to_string(), sent_at, id: msg.id });
+			}
+			"task:result" => {
+				let Some(task_id) = msg.payload["taskId"].as_str() else { return };
+				let failed = msg.payload["status"].as_str().unwrap_or("failed") != "completed";
+				let text = msg.payload["result"]
+					.as_str()
+					.or_else(|| msg.payload["error"].as_str())
+					.unwrap_or("(no answer)")
+					.to_string();
+				let _ = self.events.send(Event::BrainReply { task_id: task_id.to_string(), text, failed });
 			}
 			"sealed:direct" => {
 				let Ok(sealed) = serde_json::from_value::<SealedBox>(msg.payload["box"].clone()) else { return };

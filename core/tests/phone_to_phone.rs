@@ -132,3 +132,42 @@ async fn callers_accepted_before_are_still_trusted_after_a_restart() {
 	assert!(matches!(&ev, Event::Chat { text, .. } if text == "still trusted"), "{ev:?}");
 	client.close().await;
 }
+
+/// A phone is not an agent. Asking it to think is refused here rather than sent, and a peer
+/// that asks anyway is told so — silence would leave it waiting for an answer nobody will write.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_has_no_brain_to_ask() {
+	let alice = Arc::new(Identity::generate("alice"));
+	let bob = Arc::new(Identity::generate("bob"));
+	let (listener, _alice_events) = Listener::start(alice.clone(), 0, [bob.key_string()]).await.expect("listen");
+	let url = format!("http://127.0.0.1:{}", listener.port());
+	let info = node_info(&url).await.expect("info");
+	let (client, mut bob_events) = DirectClient::connect(&url, &info.key_string, bob.clone()).await.expect("connect");
+	wait_event(&mut bob_events, 10, |e| matches!(e, Event::Connected { .. })).await;
+
+	// She announced herself as a client, so the question never leaves his phone.
+	assert!(!client.has_brain());
+	assert!(matches!(client.ask_brain("what is the weather"), Err(ClientError::Refused(_))));
+
+	// An older build that asks anyway gets a refusal back, not silence.
+	let delegate = rust_lib_vole_chat::message::Message::create(
+		&bob,
+		"task:delegate",
+		alice.instance_id(),
+		serde_json::json!({ "taskId": "t-1", "input": "think about this", "fromName": "bob" }),
+	);
+	reqwest::Client::new()
+		.post(format!("{url}/volenet/message"))
+		.header("content-type", "application/json")
+		.body(delegate.to_json())
+		.send()
+		.await
+		.expect("post");
+	let ev = wait_event(&mut bob_events, 10, |e| matches!(e, Event::BrainReply { .. })).await;
+	assert!(
+		matches!(&ev, Event::BrainReply { task_id, text, failed }
+			if task_id == "t-1" && *failed && text.contains("not an agent")),
+		"{ev:?}"
+	);
+	client.close().await;
+}

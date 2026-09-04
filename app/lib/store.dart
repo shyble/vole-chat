@@ -133,6 +133,11 @@ class Store {
       ((await _readJsonFile('pending.json')) as List<dynamic>? ?? const []).cast<Map<String, dynamic>>();
   Future<void> writePending(List<Map<String, dynamic>> p) => _writeJsonFile('pending.json', p);
 
+  /// Chats switched over to the agent's brain, so the toggle survives a restart.
+  Future<List<String>> readBrainMode() async =>
+      ((await _readJsonFile('brain.json')) as List<dynamic>? ?? const []).cast<String>();
+  Future<void> writeBrainMode(List<String> ids) => _writeJsonFile('brain.json', ids);
+
   Future<List<String>> readRequests() async =>
       ((await _readJsonFile('requests.json')) as List<dynamic>? ?? const []).cast<String>();
   Future<void> writeRequests(List<String> r) => _writeJsonFile('requests.json', r);

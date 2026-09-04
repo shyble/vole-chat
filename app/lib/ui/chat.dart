@@ -48,10 +48,18 @@ class _ChatPageState extends State<ChatPage> {
         final request = s.requests.contains(widget.peerId);
         final consented = s.consents.contains(widget.peerId);
         final notice = s.pending[widget.peerId];
+        final brain = s.brainMode.contains(widget.peerId);
+        final thinking = brain && s.brainPending(widget.peerId);
         _jump();
         return Scaffold(
           appBar: AppBar(
             actions: [
+              if (s.canAskBrain(widget.peerId))
+                TextButton.icon(
+                  onPressed: () => s.setBrainMode(widget.peerId, !brain),
+                  icon: Icon(brain ? Icons.psychology : Icons.person_outline, size: 20),
+                  label: Text(brain ? 'Brain' : 'Human'),
+                ),
               PopupMenuButton<String>(
                 onSelected: (v) async {
                   if (v != 'remove') return;
@@ -83,9 +91,11 @@ class _ChatPageState extends State<ChatPage> {
               children: [
                 Text(name),
                 Text(
-                  c?.isNode == true || c?.isCaller == true
-                      ? (c!.connected ? 'direct · ${c.sealed ? 'sealed end to end' : 'signed'}' : 'direct · offline — held until it is back')
-                      : (c?.connected == true ? 'online' : 'away — messages wait here until they are back'),
+                  brain
+                      ? 'asking the agent itself \u2014 answers take as long as it thinks'
+                      : c?.isNode == true || c?.isCaller == true
+                          ? (c!.connected ? 'direct \u00b7 ${c.sealed ? 'sealed end to end' : 'signed'}' : 'direct \u00b7 offline \u2014 held until it is back')
+                          : (c?.connected == true ? 'online' : 'away \u2014 messages wait here until they are back'),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -114,6 +124,8 @@ class _ChatPageState extends State<ChatPage> {
                       'while you were away (last ${_time(notice.last)}). The message is still on their device '
                       'and arrives when they are online.',
                 ),
+              if (thinking)
+                const LinearProgressIndicator(minHeight: 2),
               Expanded(
                 child: msgs.isEmpty
                     ? const Center(child: Text('No messages yet.'))
@@ -138,7 +150,11 @@ class _ChatPageState extends State<ChatPage> {
                           textInputAction: TextInputAction.send,
                           onSubmitted: (_) => _send(),
                           decoration: InputDecoration(
-                            hintText: c?.reachable == false ? '$name cannot receive sealed chat' : 'Message $name',
+                            hintText: brain
+                                ? 'Ask $name'
+                                : c?.reachable == false
+                                    ? '$name cannot receive sealed chat'
+                                    : 'Message $name',
                             border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(24))),
                             isDense: true,
                           ),

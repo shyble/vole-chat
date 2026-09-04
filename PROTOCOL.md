@@ -120,9 +120,21 @@ Hub → member on (re)connect: `relay:pending { senders: [ { from, fromName, cou
 
 Limits: sealed envelope ≤ 64 KiB as serialized JSON; 30 forwards per minute per sender→recipient pair.
 
+## 7b. Asking a node's brain
+
+Over a **direct link only** (§4–§5 to a node, or the same inverted). A hub will not carry this: a relay accepts `chat:message`, `relay:connect-*` and `file:*`, and drops everything else, so executable traffic never travels through a third party.
+
+Client → node: signed `task:delegate` `{ taskId, input, fromName }`, sealed as `sealed:direct` when the node announced sealing keys. `fromName` is what makes it *chat*: the node frames the input as a message from a named peer and runs it through its own brain in a session kept per peer, rather than as an unattributed task.
+
+Node → client: `task:result` `{ taskId, status, result?, error? }`. `status: "completed"` carries `result`; anything else carries `error`. There is no progress and no partial output; an answer takes as long as a model takes.
+
+The node decides whether to answer at all. It checks the asking identity against its own peer trust (`allowBrain`), falling back to what it allows anyone who joins publicly; a refusal is a `task:result` naming `allowBrain`, so a client can tell the person what to ask its operator for.
+
+A client that serves the node endpoints (§ phone-to-phone) answers `task:delegate` with a failed `task:result` — it has no brain, and silence would leave the asker waiting.
+
 ## 8. What a client must persist
 
-Own four keypairs (export/backup as a QR of the seeds); pinned hub key strings per hub URL; roster snapshot per hub (for names and keys while offline); per-peer transcript; **outbox** (`{ref, to, toName, text, sentAt, attempts}`, a week TTL); pending notices; relay consents given and received.
+Own four keypairs (export/backup as a QR of the seeds); pinned hub key strings per hub URL; roster snapshot per hub (for names and keys while offline); per-peer transcript; which chats are switched to the node's brain; **outbox** (`{ref, to, toName, text, sentAt, attempts}`, a week TTL); pending notices; relay consents given and received.
 
 ## 9. Things the hub will never tell you
 

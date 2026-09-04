@@ -184,6 +184,11 @@ class AppState extends ChangeNotifier {
   String? nearbyUrl;
   String? nearbyError;
   final Set<String> callerKeys = {};
+  /// Chats where you are talking to the agent's brain rather than to whoever runs it.
+  final Set<String> brainMode = {};
+  /// Brain questions still waiting on an answer, by the task id they will come back with.
+  final Map<String, String> _asking = {};
+
   /// Cards we scanned, by instance id — their keys pinned by us, not vouched by a hub.
   final Map<String, String> cards = {};
   /// Members the hub has named, kept across sessions. A hub forgets a member 45 s after their
@@ -231,6 +236,7 @@ class AppState extends ChangeNotifier {
     unread.addAll(store.unread);
     consents.addAll(await store.readConsents());
     requests.addAll(await store.readRequests());
+    brainMode.addAll(await store.readBrainMode());
     for (final n in await store.readPending()) {
       final notice = Notice.fromJson(n);
       pending[notice.from] = notice;
@@ -445,6 +451,9 @@ class AppState extends ChangeNotifier {
         }
         unawaited(store.writePending(pending.values.map((n) => n.toJson()).toList()));
         notifyListeners();
+      default:
+        // Brain replies only ever come down a direct link; a hub will not relay the question.
+        break;
     }
   }
 
@@ -738,12 +747,22 @@ class AppState extends ChangeNotifier {
         _nodeLost(node, reason);
       case rust.SessionEvent_Chat(:final from, :final fromName, :final text, :final sentAt, :final id):
         _onChat(from, fromName, text, sentAt, id);
+      case rust.SessionEvent_BrainReply(:final taskId, :final text, :final failed):
+        final peer = _asking.remove(taskId) ?? node.instanceId;
+        _append(peer, Msg(id: 'brain-$taskId', out: false, text: _brainText(text, failed), ts: _now(), system: failed));
+        if (viewing != peer) _bump(peer);
+        notifyListeners();
       default:
         break;
     }
   }
 
   void _nodeLost(Node node, String reason) {
+    for (final task in _asking.entries.where((e) => e.value == node.instanceId).toList()) {
+      _asking.remove(task.key);
+      _append(node.instanceId,
+          Msg(id: 'brain-lost-${task.key}', out: false, text: 'The link dropped before an answer came back.', ts: _now(), system: true));
+    }
     _nodeEvents.remove(node.instanceId)?.cancel();
     _nodeSessions.remove(node.instanceId);
     contacts[node.instanceId]?.connected = false;
@@ -794,11 +813,58 @@ class AppState extends ChangeNotifier {
 
   // ── actions ──
 
+  /// Whether this contact is an agent we hold a direct link to, so its brain can be asked.
+  bool canAskBrain(String id) => _nodeSessions[id]?.canAskBrain() ?? false;
+
+  /// A question is out and the agent is still thinking about it.
+  bool brainPending(String id) => _asking.containsValue(id);
+
+  /// How long to wait before saying an answer is not coming. An agent may take minutes over a
+  /// hard question; it should not leave the chat waiting all day over a lost one.
+  static const _brainPatience = Duration(minutes: 10);
+
+  void _giveUpOn(String taskId) {
+    final peer = _asking.remove(taskId);
+    if (peer == null) return;
+    _append(peer,
+        Msg(id: 'brain-gone-$taskId', out: false, text: 'No answer came back.', ts: _now(), system: true));
+    notifyListeners();
+  }
+
+  void setBrainMode(String id, bool on) {
+    if (on) {
+      brainMode.add(id);
+    } else {
+      brainMode.remove(id);
+    }
+    unawaited(store.writeBrainMode(brainMode.toList()));
+    notifyListeners();
+  }
+
+  /// An agent that has not been told to answer strangers refuses by name. Say what to do about it.
+  String _brainText(String text, bool failed) => failed && text.contains('allowBrain')
+      ? '$text\n\nWhoever runs this agent can allow it: set allowBrain for you under net.peers, '
+          'or for everyone who joins under net.publicJoin.'
+      : text;
+
   /// Send, or hold. Returns a short status for the UI.
   Future<String?> send(String to, String text) async {
     final ts = _now();
     final contact = contacts[to];
     final node = _nodeSessions[to];
+    // Talking to the agent's brain: this runs its model, so the answer arrives when it arrives.
+    if (node != null && brainMode.contains(to)) {
+      try {
+        final taskId = node.askBrain(text: text);
+        _asking[taskId] = to;
+        _append(to, Msg(id: 'out-$ts', out: true, text: text, ts: ts));
+        notifyListeners();
+        Timer(_brainPatience, () => _giveUpOn(taskId));
+        return null;
+      } catch (e) {
+        return 'Could not ask: ${_short(e)}';
+      }
+    }
     if (node != null) {
       final v = node.sendChat(text: text, sentAt: ts);
       switch (v) {
@@ -955,6 +1021,8 @@ class AppState extends ChangeNotifier {
     requests.remove(id);
     consents.remove(id);
     cards.remove(id);
+    brainMode.remove(id);
+    _asking.removeWhere((_, peer) => peer == id);
     callerKeys.removeWhere((k) {
       try {
         return rust.keyStringParse(keyString: k).instanceId == id;
@@ -1022,6 +1090,11 @@ class AppState extends ChangeNotifier {
       b.writeln('      addressable=${reach != null}'
           '${reach == null ? " (nothing to seal to — no card and no roster entry)" : ""}'
           '  messages=${transcripts[c.instanceId]?.length ?? 0}');
+      if (_nodeSessions.containsKey(c.instanceId)) {
+        b.writeln('      brain: ${canAskBrain(c.instanceId) ? "askable" : "none announced"}'
+            '  mode=${brainMode.contains(c.instanceId) ? "brain" : "human"}'
+            '  waiting=${brainPending(c.instanceId)}');
+      }
       final n = pending[c.instanceId];
       if (n != null) b.writeln('      notice: tried ${n.count}x, last ${when(n.last)}');
     }

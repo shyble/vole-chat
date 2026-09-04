@@ -109,6 +109,9 @@ pub enum Event {
 	ConnectAccepted { from: String, from_name: String },
 	ConnectDenied { from: String, from_name: String },
 	Pending(Vec<Notice>),
+	/// An agent's brain answered. Only ever arrives over a direct link: a hub refuses to relay
+	/// anything executable, so asking a brain through one is not possible by design.
+	BrainReply { task_id: String, text: String, failed: bool },
 }
 
 struct Inner {

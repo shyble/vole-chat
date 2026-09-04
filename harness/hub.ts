@@ -45,6 +45,9 @@ const memberCfg = () => ({
 	publishNames: true,
 	peers: [{ url: hubUrl, trust: 'full' as const }],
 	relay: { acceptFrom: '*' as const },
+	// Brain access starts off, as it does on a real agent. `{cmd:"allow-brain"}` grants it,
+	// which is what an operator does with `allowBrain: true`.
+	publicJoin: { enabled: true, trustLevel: 'tool' as const, allowBrain: false },
 })
 
 async function startMember(): Promise<void> {
@@ -152,6 +155,14 @@ async function main(): Promise<void> {
 				case 'pair-accept':
 					out({ ev: 'pair-accept-result', ...(await member!.acceptPair(c.to)) })
 					break
+				case 'allow-brain': {
+					// What an operator does in vole.config.json: grant brain access.
+					// biome-ignore lint/suspicious/noExplicitAny: harness reaches into config
+					const cfg = (member as any).config as { publicJoin?: { allowBrain?: boolean } }
+					if (cfg.publicJoin) cfg.publicJoin.allowBrain = true
+					out({ ev: 'allow-brain-result', ok: true })
+					break
+				}
 				case 'exit':
 					await member?.stop()
 					await hub.stop()

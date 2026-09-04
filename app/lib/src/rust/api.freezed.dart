@@ -389,7 +389,7 @@ extension SessionEventPatterns on SessionEvent {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( SessionEvent_Connected value)?  connected,TResult Function( SessionEvent_Disconnected value)?  disconnected,TResult Function( SessionEvent_Roster value)?  roster,TResult Function( SessionEvent_Chat value)?  chat,TResult Function( SessionEvent_ConnectRequest value)?  connectRequest,TResult Function( SessionEvent_ConnectAccepted value)?  connectAccepted,TResult Function( SessionEvent_ConnectDenied value)?  connectDenied,TResult Function( SessionEvent_Pending value)?  pending,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( SessionEvent_Connected value)?  connected,TResult Function( SessionEvent_Disconnected value)?  disconnected,TResult Function( SessionEvent_Roster value)?  roster,TResult Function( SessionEvent_Chat value)?  chat,TResult Function( SessionEvent_ConnectRequest value)?  connectRequest,TResult Function( SessionEvent_ConnectAccepted value)?  connectAccepted,TResult Function( SessionEvent_ConnectDenied value)?  connectDenied,TResult Function( SessionEvent_Pending value)?  pending,TResult Function( SessionEvent_BrainReply value)?  brainReply,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case SessionEvent_Connected() when connected != null:
@@ -400,7 +400,8 @@ return chat(_that);case SessionEvent_ConnectRequest() when connectRequest != nul
 return connectRequest(_that);case SessionEvent_ConnectAccepted() when connectAccepted != null:
 return connectAccepted(_that);case SessionEvent_ConnectDenied() when connectDenied != null:
 return connectDenied(_that);case SessionEvent_Pending() when pending != null:
-return pending(_that);case _:
+return pending(_that);case SessionEvent_BrainReply() when brainReply != null:
+return brainReply(_that);case _:
   return orElse();
 
 }
@@ -418,7 +419,7 @@ return pending(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( SessionEvent_Connected value)  connected,required TResult Function( SessionEvent_Disconnected value)  disconnected,required TResult Function( SessionEvent_Roster value)  roster,required TResult Function( SessionEvent_Chat value)  chat,required TResult Function( SessionEvent_ConnectRequest value)  connectRequest,required TResult Function( SessionEvent_ConnectAccepted value)  connectAccepted,required TResult Function( SessionEvent_ConnectDenied value)  connectDenied,required TResult Function( SessionEvent_Pending value)  pending,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( SessionEvent_Connected value)  connected,required TResult Function( SessionEvent_Disconnected value)  disconnected,required TResult Function( SessionEvent_Roster value)  roster,required TResult Function( SessionEvent_Chat value)  chat,required TResult Function( SessionEvent_ConnectRequest value)  connectRequest,required TResult Function( SessionEvent_ConnectAccepted value)  connectAccepted,required TResult Function( SessionEvent_ConnectDenied value)  connectDenied,required TResult Function( SessionEvent_Pending value)  pending,required TResult Function( SessionEvent_BrainReply value)  brainReply,}){
 final _that = this;
 switch (_that) {
 case SessionEvent_Connected():
@@ -429,7 +430,8 @@ return chat(_that);case SessionEvent_ConnectRequest():
 return connectRequest(_that);case SessionEvent_ConnectAccepted():
 return connectAccepted(_that);case SessionEvent_ConnectDenied():
 return connectDenied(_that);case SessionEvent_Pending():
-return pending(_that);}
+return pending(_that);case SessionEvent_BrainReply():
+return brainReply(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -443,7 +445,7 @@ return pending(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( SessionEvent_Connected value)?  connected,TResult? Function( SessionEvent_Disconnected value)?  disconnected,TResult? Function( SessionEvent_Roster value)?  roster,TResult? Function( SessionEvent_Chat value)?  chat,TResult? Function( SessionEvent_ConnectRequest value)?  connectRequest,TResult? Function( SessionEvent_ConnectAccepted value)?  connectAccepted,TResult? Function( SessionEvent_ConnectDenied value)?  connectDenied,TResult? Function( SessionEvent_Pending value)?  pending,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( SessionEvent_Connected value)?  connected,TResult? Function( SessionEvent_Disconnected value)?  disconnected,TResult? Function( SessionEvent_Roster value)?  roster,TResult? Function( SessionEvent_Chat value)?  chat,TResult? Function( SessionEvent_ConnectRequest value)?  connectRequest,TResult? Function( SessionEvent_ConnectAccepted value)?  connectAccepted,TResult? Function( SessionEvent_ConnectDenied value)?  connectDenied,TResult? Function( SessionEvent_Pending value)?  pending,TResult? Function( SessionEvent_BrainReply value)?  brainReply,}){
 final _that = this;
 switch (_that) {
 case SessionEvent_Connected() when connected != null:
@@ -454,7 +456,8 @@ return chat(_that);case SessionEvent_ConnectRequest() when connectRequest != nul
 return connectRequest(_that);case SessionEvent_ConnectAccepted() when connectAccepted != null:
 return connectAccepted(_that);case SessionEvent_ConnectDenied() when connectDenied != null:
 return connectDenied(_that);case SessionEvent_Pending() when pending != null:
-return pending(_that);case _:
+return pending(_that);case SessionEvent_BrainReply() when brainReply != null:
+return brainReply(_that);case _:
   return null;
 
 }
@@ -471,7 +474,7 @@ return pending(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String hubName)?  connected,TResult Function( String reason)?  disconnected,TResult Function( List<MemberInfo> members)?  roster,TResult Function( String from,  String fromName,  String text,  PlatformInt64 sentAt,  String id)?  chat,TResult Function( String from,  String fromName,  String? note)?  connectRequest,TResult Function( String from,  String fromName)?  connectAccepted,TResult Function( String from,  String fromName)?  connectDenied,TResult Function( List<NoticeInfo> notices)?  pending,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String hubName)?  connected,TResult Function( String reason)?  disconnected,TResult Function( List<MemberInfo> members)?  roster,TResult Function( String from,  String fromName,  String text,  PlatformInt64 sentAt,  String id)?  chat,TResult Function( String from,  String fromName,  String? note)?  connectRequest,TResult Function( String from,  String fromName)?  connectAccepted,TResult Function( String from,  String fromName)?  connectDenied,TResult Function( List<NoticeInfo> notices)?  pending,TResult Function( String taskId,  String text,  bool failed)?  brainReply,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case SessionEvent_Connected() when connected != null:
 return connected(_that.hubName);case SessionEvent_Disconnected() when disconnected != null:
@@ -481,7 +484,8 @@ return chat(_that.from,_that.fromName,_that.text,_that.sentAt,_that.id);case Ses
 return connectRequest(_that.from,_that.fromName,_that.note);case SessionEvent_ConnectAccepted() when connectAccepted != null:
 return connectAccepted(_that.from,_that.fromName);case SessionEvent_ConnectDenied() when connectDenied != null:
 return connectDenied(_that.from,_that.fromName);case SessionEvent_Pending() when pending != null:
-return pending(_that.notices);case _:
+return pending(_that.notices);case SessionEvent_BrainReply() when brainReply != null:
+return brainReply(_that.taskId,_that.text,_that.failed);case _:
   return orElse();
 
 }
@@ -499,7 +503,7 @@ return pending(_that.notices);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String hubName)  connected,required TResult Function( String reason)  disconnected,required TResult Function( List<MemberInfo> members)  roster,required TResult Function( String from,  String fromName,  String text,  PlatformInt64 sentAt,  String id)  chat,required TResult Function( String from,  String fromName,  String? note)  connectRequest,required TResult Function( String from,  String fromName)  connectAccepted,required TResult Function( String from,  String fromName)  connectDenied,required TResult Function( List<NoticeInfo> notices)  pending,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String hubName)  connected,required TResult Function( String reason)  disconnected,required TResult Function( List<MemberInfo> members)  roster,required TResult Function( String from,  String fromName,  String text,  PlatformInt64 sentAt,  String id)  chat,required TResult Function( String from,  String fromName,  String? note)  connectRequest,required TResult Function( String from,  String fromName)  connectAccepted,required TResult Function( String from,  String fromName)  connectDenied,required TResult Function( List<NoticeInfo> notices)  pending,required TResult Function( String taskId,  String text,  bool failed)  brainReply,}) {final _that = this;
 switch (_that) {
 case SessionEvent_Connected():
 return connected(_that.hubName);case SessionEvent_Disconnected():
@@ -509,7 +513,8 @@ return chat(_that.from,_that.fromName,_that.text,_that.sentAt,_that.id);case Ses
 return connectRequest(_that.from,_that.fromName,_that.note);case SessionEvent_ConnectAccepted():
 return connectAccepted(_that.from,_that.fromName);case SessionEvent_ConnectDenied():
 return connectDenied(_that.from,_that.fromName);case SessionEvent_Pending():
-return pending(_that.notices);}
+return pending(_that.notices);case SessionEvent_BrainReply():
+return brainReply(_that.taskId,_that.text,_that.failed);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -523,7 +528,7 @@ return pending(_that.notices);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String hubName)?  connected,TResult? Function( String reason)?  disconnected,TResult? Function( List<MemberInfo> members)?  roster,TResult? Function( String from,  String fromName,  String text,  PlatformInt64 sentAt,  String id)?  chat,TResult? Function( String from,  String fromName,  String? note)?  connectRequest,TResult? Function( String from,  String fromName)?  connectAccepted,TResult? Function( String from,  String fromName)?  connectDenied,TResult? Function( List<NoticeInfo> notices)?  pending,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String hubName)?  connected,TResult? Function( String reason)?  disconnected,TResult? Function( List<MemberInfo> members)?  roster,TResult? Function( String from,  String fromName,  String text,  PlatformInt64 sentAt,  String id)?  chat,TResult? Function( String from,  String fromName,  String? note)?  connectRequest,TResult? Function( String from,  String fromName)?  connectAccepted,TResult? Function( String from,  String fromName)?  connectDenied,TResult? Function( List<NoticeInfo> notices)?  pending,TResult? Function( String taskId,  String text,  bool failed)?  brainReply,}) {final _that = this;
 switch (_that) {
 case SessionEvent_Connected() when connected != null:
 return connected(_that.hubName);case SessionEvent_Disconnected() when disconnected != null:
@@ -533,7 +538,8 @@ return chat(_that.from,_that.fromName,_that.text,_that.sentAt,_that.id);case Ses
 return connectRequest(_that.from,_that.fromName,_that.note);case SessionEvent_ConnectAccepted() when connectAccepted != null:
 return connectAccepted(_that.from,_that.fromName);case SessionEvent_ConnectDenied() when connectDenied != null:
 return connectDenied(_that.from,_that.fromName);case SessionEvent_Pending() when pending != null:
-return pending(_that.notices);case _:
+return pending(_that.notices);case SessionEvent_BrainReply() when brainReply != null:
+return brainReply(_that.taskId,_that.text,_that.failed);case _:
   return null;
 
 }
@@ -1091,6 +1097,76 @@ class _$SessionEvent_PendingCopyWithImpl<$Res>
   return _then(SessionEvent_Pending(
 notices: null == notices ? _self._notices : notices // ignore: cast_nullable_to_non_nullable
 as List<NoticeInfo>,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class SessionEvent_BrainReply extends SessionEvent {
+  const SessionEvent_BrainReply({required this.taskId, required this.text, required this.failed}): super._();
+  
+
+ final  String taskId;
+ final  String text;
+ final  bool failed;
+
+/// Create a copy of SessionEvent
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SessionEvent_BrainReplyCopyWith<SessionEvent_BrainReply> get copyWith => _$SessionEvent_BrainReplyCopyWithImpl<SessionEvent_BrainReply>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SessionEvent_BrainReply&&(identical(other.taskId, taskId) || other.taskId == taskId)&&(identical(other.text, text) || other.text == text)&&(identical(other.failed, failed) || other.failed == failed));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,taskId,text,failed);
+
+@override
+String toString() {
+  return 'SessionEvent.brainReply(taskId: $taskId, text: $text, failed: $failed)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SessionEvent_BrainReplyCopyWith<$Res> implements $SessionEventCopyWith<$Res> {
+  factory $SessionEvent_BrainReplyCopyWith(SessionEvent_BrainReply value, $Res Function(SessionEvent_BrainReply) _then) = _$SessionEvent_BrainReplyCopyWithImpl;
+@useResult
+$Res call({
+ String taskId, String text, bool failed
+});
+
+
+
+
+}
+/// @nodoc
+class _$SessionEvent_BrainReplyCopyWithImpl<$Res>
+    implements $SessionEvent_BrainReplyCopyWith<$Res> {
+  _$SessionEvent_BrainReplyCopyWithImpl(this._self, this._then);
+
+  final SessionEvent_BrainReply _self;
+  final $Res Function(SessionEvent_BrainReply) _then;
+
+/// Create a copy of SessionEvent
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? taskId = null,Object? text = null,Object? failed = null,}) {
+  return _then(SessionEvent_BrainReply(
+taskId: null == taskId ? _self.taskId : taskId // ignore: cast_nullable_to_non_nullable
+as String,text: null == text ? _self.text : text // ignore: cast_nullable_to_non_nullable
+as String,failed: null == failed ? _self.failed : failed // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 

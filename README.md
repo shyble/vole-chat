@@ -16,7 +16,9 @@ Flutter UI on both stores, Rust protocol core underneath. Both are here.
 
 You add people by **identity**, not address: scan their code once and they stay reachable wherever either of you moves. Underneath, three routes carry it — **nearby** (one phone listens, the other dials, no hub and no internet), **a node** (dial an agent at its address), and **a hub** (relayed, for when neither side has an address) — and the app uses whichever is up.
 
-A code is small on purpose. Post-quantum keys are far too big for a QR (ML-DSA-65 alone is 1952 bytes, all four about 4.4 KB of base64, against a 2953-byte ceiling), so a code carries the Ed25519 key plus a **fingerprint over the whole key set**, about 160 characters. The bulk still arrives from the hub, and is checked against that fingerprint — so the hub supplies the keys but cannot change them, and cannot read or impersonate.
+A code carries what is needed to *seal to you*: the Ed25519 signing key, both sealing keys, and a **fingerprint over the whole key set**. Not the ML-DSA-65 key — 1952 bytes on its own, and all four keys come to about 4.4 KB of base64 against a 2953-byte QR ceiling — so that one arrives from the hub and is checked against the fingerprint. The hub therefore supplies a key it cannot change, and can neither read nor impersonate; and because the sealing keys travelled by QR, you can write to someone the hub has never described.
+
+Where the other end is one of your own agents, you can talk past its operator to the **agent itself**: a switch in the chat sends the question to its brain, in a session it keeps for you, and its answer comes back in the same transcript. Its operator decides whether you may — until they set `allowBrain` for your identity, the answer is a refusal that says so. This runs on direct links only; a hub will not relay it, by design.
 
 ## Design decisions, and why
 
@@ -49,5 +51,6 @@ The bridge's Dart bindings are generated: after changing `core/src/api/`, run `f
 - [x] Flutter app over the bridge: onboarding, hubs, chats (consent, held messages, notices), key backup — macOS build and Dart-side hub and node tests pass (`app/test/bridge_test.dart`)
 - [x] Direct connections to nodes (your own agents): fingerprint, pair request, operator accepts once, then sealed chat straight over the node's address — `core/tests/node.rs`
 - [x] Phone to phone on one network, with nothing in between: one listens, the other dials it the same way — `core/tests/phone_to_phone.rs`
+- [x] Talking to an agent's brain over a direct link, gated on its operator's `allowBrain` — `core/tests/brain.rs`
 - [x] Live while open, closed cleanly in the background, reconnects on resume
 - [ ] Store builds (iOS: needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`, then `flutter build ios`; Android: needs the Android SDK and NDK installed, then `flutter build apk`)

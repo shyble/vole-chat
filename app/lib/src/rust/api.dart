@@ -160,6 +160,14 @@ CardOut cardRead({required String text}) =>
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NodeSession>>
 abstract class NodeSession implements RustOpaqueInterface {
+  /// Ask this agent's brain rather than leaving a message for whoever runs it. Returns the id
+  /// the answer will carry; it arrives as a BrainReply event, and can take as long as a model
+  /// takes. The agent refuses unless its operator has granted this identity brain access.
+  String askBrain({required String text});
+
+  /// Whether this link can carry a brain request at all.
+  bool canAskBrain();
+
   Future<void> close();
 
   Stream<SessionEvent> events();
@@ -720,4 +728,11 @@ sealed class SessionEvent with _$SessionEvent {
   }) = SessionEvent_ConnectDenied;
   const factory SessionEvent.pending({required List<NoticeInfo> notices}) =
       SessionEvent_Pending;
+
+  /// An agent's brain answered. Direct links only — a hub relays nothing executable.
+  const factory SessionEvent.brainReply({
+    required String taskId,
+    required String text,
+    required bool failed,
+  }) = SessionEvent_BrainReply;
 }

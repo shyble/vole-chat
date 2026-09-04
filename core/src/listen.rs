@@ -187,15 +187,20 @@ impl Drop for Listener {
 
 impl Shared {
 	fn send_chat(&self, to: &str, text: &str, sent_at: Option<i64>) -> bool {
-		let callers = self.callers.lock().unwrap();
-		let Some(caller) = callers.get(to) else { return false };
-		let Some(tx) = &caller.tx else { return false };
 		let msg = Message::create(
 			&self.me,
 			"chat:message",
 			to,
 			json!({ "text": text, "fromName": self.me.name, "sentAt": sent_at.unwrap_or_else(now_ms) }),
 		);
+		self.send_wrapped(to, msg)
+	}
+
+	/// Send to a caller, sealed when it announced sealing keys, plain when it did not.
+	fn send_wrapped(&self, to: &str, msg: Message) -> bool {
+		let callers = self.callers.lock().unwrap();
+		let Some(caller) = callers.get(to) else { return false };
+		let Some(tx) = &caller.tx else { return false };
 		let wire = match &caller.x_public {
 			Some(x) => {
 				let aad = format!("{}|{}", self.me.instance_id(), to);
@@ -238,6 +243,7 @@ impl Shared {
 			"endpoint": "",
 			"capabilities": [],
 			"role": "peer",
+			"kind": "client",
 			"version": "3.0.0",
 			"xPublicKey": self.me.x25519_public_b64(),
 			"mlkemPublicKey": self.me.mlkem_public_b64(),
@@ -272,6 +278,22 @@ impl Shared {
 				}
 			}
 			"discover" => self.note_keys(&msg.from, &msg.payload),
+			// An agent may delegate to a peer it trusts. This is a phone: there is nobody here to
+			// think about it, and silence would leave the asker waiting forever, so refuse plainly.
+			"task:delegate" => {
+				let Some(task_id) = msg.payload["taskId"].as_str() else { return };
+				let reply = Message::create(
+					&self.me,
+					"task:result",
+					&msg.from,
+					json!({
+						"taskId": task_id,
+						"status": "failed",
+						"error": format!("{} is a vole-chat app, not an agent — there is no brain here to ask.", self.me.name),
+					}),
+				);
+				self.send_wrapped(&msg.from, reply);
+			}
 			"chat:message" => {
 				let Some(text) = msg.payload["text"].as_str() else { return };
 				let name = self
@@ -326,6 +348,7 @@ async fn info(State(s): State<Arc<Shared>>) -> impl IntoResponse {
 		"version": 1,
 		"publicKey": s.me.key_string(),
 		"name": s.me.name,
+		"kind": "client",
 		"peers": [],
 		"peerCount": 0,
 	}))
