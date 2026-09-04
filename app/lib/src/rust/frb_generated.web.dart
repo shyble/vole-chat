@@ -104,6 +104,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
+  MemberInfo dco_decode_box_autoadd_member_info(dynamic raw);
+
+  @protected
   CallerOut dco_decode_caller_out(dynamic raw);
 
   @protected
@@ -156,6 +159,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  MemberInfo? dco_decode_opt_box_autoadd_member_info(dynamic raw);
 
   @protected
   OutboxAdd dco_decode_outbox_add(dynamic raw);
@@ -265,6 +271,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  MemberInfo sse_decode_box_autoadd_member_info(SseDeserializer deserializer);
+
+  @protected
   CallerOut sse_decode_caller_out(SseDeserializer deserializer);
 
   @protected
@@ -319,6 +328,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  MemberInfo? sse_decode_opt_box_autoadd_member_info(
+    SseDeserializer deserializer,
+  );
 
   @protected
   OutboxAdd sse_decode_outbox_add(SseDeserializer deserializer);
@@ -447,6 +461,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_member_info(
+    MemberInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_caller_out(CallerOut self, SseSerializer serializer);
 
   @protected
@@ -518,6 +538,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_i_64(
     PlatformInt64? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_member_info(
+    MemberInfo? self,
     SseSerializer serializer,
   );
 

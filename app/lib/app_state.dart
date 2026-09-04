@@ -196,6 +196,14 @@ class AppState extends ChangeNotifier {
   final Map<String, String> nodeStatus = {};
   Timer? _nodeRetry;
   bool _foreground = true;
+  /// Leaving the app does not close the session at once.
+  ///
+  /// Anything waiting can only go out while both sides are connected, and two phones are hardly
+  /// ever awake together — put one down to pick the other up and they never overlap, so a held
+  /// request has no moment in which to be delivered. iOS grants a short window after you leave;
+  /// using it means switching between two phones gives them one.
+  Timer? _linger;
+  static const _lingerFor = Duration(seconds: 20);
 
   bool get hasIdentity => identity != null;
 
@@ -247,6 +255,8 @@ class AppState extends ChangeNotifier {
   /// The app came to the foreground: everything reconnects.
   void connectAll() {
     _foreground = true;
+    _linger?.cancel();
+    _linger = null;
     if (identity == null) return;
     if (activeHub != null) unawaited(connect());
     for (final n in nodes) {
@@ -255,16 +265,21 @@ class AppState extends ChangeNotifier {
     if (nearby) unawaited(startNearby());
   }
 
-  /// The app is going away: close everything cleanly so the other side knows at once.
+  /// The app is going away. Stay up for a moment first — see [_linger].
   void disconnectAll() {
     _foreground = false;
     _reconnect?.cancel();
     _nodeRetry?.cancel();
-    unawaited(disconnect());
-    for (final id in _nodeSessions.keys.toList()) {
-      unawaited(_closeNode(id, 'app in background'));
-    }
-    _stopNearby();
+    _linger?.cancel();
+    _linger = Timer(_lingerFor, () {
+      _linger = null;
+      if (_foreground) return;
+      unawaited(disconnect());
+      for (final id in _nodeSessions.keys.toList()) {
+        unawaited(_closeNode(id, 'app in background'));
+      }
+      _stopNearby();
+    });
   }
 
   // ── identity ──
@@ -348,7 +363,7 @@ class AppState extends ChangeNotifier {
       _session = s;
       _events = s.events().listen(_onEvent, onError: (_) => _lost('event stream failed'));
       _retry?.cancel();
-      _retry = Timer.periodic(const Duration(seconds: 20), (_) => unawaited(flushOutbox()));
+      _retry = Timer.periodic(const Duration(seconds: 5), (_) => unawaited(flushOutbox()));
     } catch (e) {
       status = 'Could not connect: ${_short(e)}';
       connected = false;
@@ -975,6 +990,56 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// A plain-text account of what the app believes, for when chat does not arrive and the
+  /// reason is invisible from the outside.
+  String diagnostics() {
+    final b = StringBuffer();
+    String when(int ms) => ms == 0
+        ? '-'
+        : DateTime.fromMillisecondsSinceEpoch(ms).toIso8601String().substring(11, 19);
+
+    b.writeln('me      ${identity?.name} ${identity?.instanceId}');
+    b.writeln('hub     ${activeHub?.name ?? "-"} ${activeHub?.url ?? ""}');
+    b.writeln('session ${_session == null ? "none" : connected ? "connected" : "not connected"}'
+        '${status == null ? "" : "  ($status)"}');
+    b.writeln('nearby  ${nearby ? (nearbyUrl ?? nearbyError ?? "starting") : "off"}');
+
+    final roster = _session?.roster() ?? const [];
+    b.writeln('\nroster (${roster.length}) — what the hub says is there');
+    for (final m in roster) {
+      b.writeln('  ${m.connected ? "online " : "away   "} ${m.instanceId}  ${m.name}'
+          '  seal=${m.reachable}');
+    }
+
+    b.writeln('\ncontacts (${contacts.length})');
+    for (final c in contacts.values) {
+      final reach = _session?.reachable(instanceId: c.instanceId);
+      b.writeln('  ${c.name.isEmpty ? "(unnamed)" : c.name}  ${c.instanceId}');
+      b.writeln('      connected=${c.connected} node=${c.isNode} caller=${c.isCaller}'
+          '  card=${cards.containsKey(c.instanceId)}'
+          '  consented=${consents.contains(c.instanceId)}'
+          '  asking=${requests.contains(c.instanceId)}');
+      b.writeln('      addressable=${reach != null}'
+          '${reach == null ? " (nothing to seal to — no card and no roster entry)" : ""}'
+          '  messages=${transcripts[c.instanceId]?.length ?? 0}');
+      final n = pending[c.instanceId];
+      if (n != null) b.writeln('      notice: tried ${n.count}x, last ${when(n.last)}');
+    }
+
+    final held = rust.outboxList(outboxJson: outboxJson);
+    b.writeln('\noutbox (${held.length}) — waiting to go out');
+    for (final e in held) {
+      b.writeln('  ${e.kind}  to ${e.toName} ${e.to}  written ${when(e.sentAt)}'
+          '  tries=${e.attempts}');
+      if (e.note != null) b.writeln('      note: ${e.note}');
+      if (e.lastError != null) b.writeln('      last result: ${e.lastError}');
+    }
+
+    b.writeln('\nknown ${_known.length} · cards ${cards.length} · consents ${consents.length}'
+        ' · callers ${callerKeys.length} · hubs ${hubs.length} · nodes ${nodes.length}');
+    return b.toString();
+  }
+
   void openChat(String id) {
     viewing = id;
     if (unread.remove(id) != null) unawaited(store.setUnread(unread));
@@ -1017,6 +1082,7 @@ class AppState extends ChangeNotifier {
   void dispose() {
     _reconnect?.cancel();
     _retry?.cancel();
+    _linger?.cancel();
     _nodeRetry?.cancel();
     _events?.cancel();
     _reachableEvents?.cancel();

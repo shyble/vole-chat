@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -447031815;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1418842622;
 
 // Section: executor
 
@@ -1599,6 +1599,56 @@ fn wire__crate__api__Session_pin_impl(
         },
     )
 }
+fn wire__crate__api__Session_reachable_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "Session_reachable",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Session>,
+            >>::sse_decode(&mut deserializer);
+            let api_instance_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>(crate::api::Session::reachable(
+                    &*api_that_guard,
+                    api_instance_id,
+                ))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__Session_request_connect_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2799,6 +2849,17 @@ impl SseDecode for Option<i64> {
     }
 }
 
+impl SseDecode for Option<crate::api::MemberInfo> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::MemberInfo>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for crate::api::OutboxAdd {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2821,6 +2882,8 @@ impl SseDecode for crate::api::OutboxItem {
         let mut var_text = <String>::sse_decode(deserializer);
         let mut var_sentAt = <i64>::sse_decode(deserializer);
         let mut var_attempts = <u32>::sse_decode(deserializer);
+        let mut var_note = <Option<String>>::sse_decode(deserializer);
+        let mut var_lastError = <Option<String>>::sse_decode(deserializer);
         return crate::api::OutboxItem {
             r#ref: var_ref,
             kind: var_kind,
@@ -2829,6 +2892,8 @@ impl SseDecode for crate::api::OutboxItem {
             text: var_text,
             sent_at: var_sentAt,
             attempts: var_attempts,
+            note: var_note,
+            last_error: var_lastError,
         };
     }
 }
@@ -3033,15 +3098,15 @@ fn pde_ffi_dispatcher_primary_impl(
         23 => wire__crate__api__Session_deny_impl(port, ptr, rust_vec_len, data_len),
         24 => wire__crate__api__Session_events_impl(port, ptr, rust_vec_len, data_len),
         25 => wire__crate__api__Session_flush_outbox_impl(port, ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__Session_request_connect_impl(port, ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__Session_send_chat_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__hub_join_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__node_connect_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__node_info_impl(port, ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__node_pair_impl(port, ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__reachable_start_impl(port, ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__session_connect_impl(port, ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__Session_request_connect_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__Session_send_chat_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__hub_join_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__node_connect_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__node_info_impl(port, ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__node_pair_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__reachable_start_impl(port, ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__session_connect_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3077,18 +3142,19 @@ fn pde_ffi_dispatcher_sync_impl(
         29 => wire__crate__api__Session_known_members_impl(ptr, rust_vec_len, data_len),
         30 => wire__crate__api__Session_pending_impl(ptr, rust_vec_len, data_len),
         31 => wire__crate__api__Session_pin_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__Session_revoke_impl(ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__Session_roster_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__card_mine_impl(ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__card_read_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__identity_create_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__identity_restore_impl(ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__key_string_parse_impl(ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__local_address_impl(ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__outbox_add_impl(ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__outbox_add_consent_impl(ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__outbox_list_impl(ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__outbox_remove_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__Session_reachable_impl(ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__Session_revoke_impl(ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__Session_roster_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__card_mine_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__card_read_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__identity_create_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__identity_restore_impl(ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__key_string_parse_impl(ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__local_address_impl(ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__outbox_add_impl(ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__outbox_add_consent_impl(ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__outbox_list_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__outbox_remove_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3313,6 +3379,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::OutboxItem {
             self.text.into_into_dart().into_dart(),
             self.sent_at.into_into_dart().into_dart(),
             self.attempts.into_into_dart().into_dart(),
+            self.note.into_into_dart().into_dart(),
+            self.last_error.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3725,6 +3793,16 @@ impl SseEncode for Option<i64> {
     }
 }
 
+impl SseEncode for Option<crate::api::MemberInfo> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::MemberInfo>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for crate::api::OutboxAdd {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3743,6 +3821,8 @@ impl SseEncode for crate::api::OutboxItem {
         <String>::sse_encode(self.text, serializer);
         <i64>::sse_encode(self.sent_at, serializer);
         <u32>::sse_encode(self.attempts, serializer);
+        <Option<String>>::sse_encode(self.note, serializer);
+        <Option<String>>::sse_encode(self.last_error, serializer);
     }
 }
 

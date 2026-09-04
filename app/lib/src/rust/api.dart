@@ -246,6 +246,9 @@ abstract class Session implements RustOpaqueInterface {
   /// Pin a scanned card on this live session — no reconnect needed.
   void pin({required String cardText});
 
+  /// Everyone we could address right now, including those the hub has stopped listing.
+  MemberInfo? reachable({required String instanceId});
+
   Future<SendVerdict> requestConnect({required String to, String? note});
 
   /// Stop accepting them, and forget their pinned card.
@@ -553,6 +556,8 @@ class OutboxItem {
   final String text;
   final PlatformInt64 sentAt;
   final int attempts;
+  final String? note;
+  final String? lastError;
 
   const OutboxItem({
     required this.ref,
@@ -562,6 +567,8 @@ class OutboxItem {
     required this.text,
     required this.sentAt,
     required this.attempts,
+    this.note,
+    this.lastError,
   });
 
   @override
@@ -572,7 +579,9 @@ class OutboxItem {
       toName.hashCode ^
       text.hashCode ^
       sentAt.hashCode ^
-      attempts.hashCode;
+      attempts.hashCode ^
+      note.hashCode ^
+      lastError.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -585,7 +594,9 @@ class OutboxItem {
           toName == other.toName &&
           text == other.text &&
           sentAt == other.sentAt &&
-          attempts == other.attempts;
+          attempts == other.attempts &&
+          note == other.note &&
+          lastError == other.lastError;
 }
 
 class PairOutcomeOut {

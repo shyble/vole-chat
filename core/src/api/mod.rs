@@ -218,6 +218,12 @@ impl Session {
 		self.client.roster().iter().map(member_info).collect()
 	}
 
+	/// Everyone we could address right now, including those the hub has stopped listing.
+	#[frb(sync)]
+	pub fn reachable(&self, instance_id: String) -> Option<MemberInfo> {
+		self.client.member(&instance_id).as_ref().map(member_info)
+	}
+
 	#[frb(sync)]
 	pub fn pending(&self) -> Vec<NoticeInfo> {
 		self.client.pending().iter().map(notice_info).collect()
@@ -352,6 +358,8 @@ pub struct OutboxItem {
 	pub text: String,
 	pub sent_at: i64,
 	pub attempts: u32,
+	pub note: Option<String>,
+	pub last_error: Option<String>,
 }
 
 #[frb(sync)]
@@ -373,6 +381,8 @@ pub fn outbox_list(outbox_json: String) -> Vec<OutboxItem> {
 			text: e.text.clone(),
 			sent_at: e.sent_at,
 			attempts: e.attempts,
+			note: e.note.clone(),
+			last_error: e.last_error.clone(),
 		})
 		.collect()
 }

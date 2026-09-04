@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../app_state.dart';
+import 'diagnostics.dart';
 import 'scan.dart';
 
 /// Your identity: who you are to others, and the one thing to back up.
@@ -101,6 +102,13 @@ class SettingsPage extends StatelessWidget {
               title: Text(s.contacts[id]?.name.isNotEmpty == true ? s.contacts[id]!.name : id),
               subtitle: Text(id, style: t.bodySmall),
             ),
+          const SizedBox(height: 20),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => DiagnosticsPage(s))),
+            icon: const Icon(Icons.troubleshoot),
+            label: const Text('Diagnostics'),
+          ),
           const SizedBox(height: 28),
           Text(
             'Messages are sealed to the recipient with X25519 + ML-KEM-768 and signed with Ed25519 + ML-DSA-65. '
