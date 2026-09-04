@@ -321,8 +321,32 @@ pub fn outbox_add(outbox_json: String, to: String, to_name: String, text: String
 	OutboxAdd { outbox_json: outbox.to_json(), r#ref: e.r#ref }
 }
 
+/// Hold a step of the consent handshake for someone who is away. Without this, asking to
+/// connect while the other phone is asleep reaches nobody and is never retried — so neither
+/// side can ever accept the other.
+#[frb(sync)]
+pub fn outbox_add_consent(
+	outbox_json: String,
+	kind: String,
+	to: String,
+	to_name: String,
+	note: Option<String>,
+	sent_at: i64,
+) -> OutboxAdd {
+	let kind = match kind.as_str() {
+		"connect-accept" => crate::outbox::OutboxKind::ConnectAccept,
+		"connect-deny" => crate::outbox::OutboxKind::ConnectDeny,
+		_ => crate::outbox::OutboxKind::ConnectRequest,
+	};
+	let mut outbox = Outbox::from_json(&outbox_json);
+	let e = outbox.add_kind(kind, &to, &to_name, "", sent_at, note);
+	OutboxAdd { outbox_json: outbox.to_json(), r#ref: e.r#ref }
+}
+
 pub struct OutboxItem {
 	pub r#ref: String,
+	/// "chat", "connect-request", "connect-accept" or "connect-deny".
+	pub kind: String,
 	pub to: String,
 	pub to_name: String,
 	pub text: String,
@@ -337,6 +361,13 @@ pub fn outbox_list(outbox_json: String) -> Vec<OutboxItem> {
 		.iter()
 		.map(|e| OutboxItem {
 			r#ref: e.r#ref.clone(),
+			kind: match e.kind {
+				crate::outbox::OutboxKind::Chat => "chat",
+				crate::outbox::OutboxKind::ConnectRequest => "connect-request",
+				crate::outbox::OutboxKind::ConnectAccept => "connect-accept",
+				crate::outbox::OutboxKind::ConnectDeny => "connect-deny",
+			}
+			.to_string(),
 			to: e.to.clone(),
 			to_name: e.to_name.clone(),
 			text: e.text.clone(),

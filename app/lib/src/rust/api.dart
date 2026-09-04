@@ -70,6 +70,25 @@ OutboxAdd outboxAdd({
   sentAt: sentAt,
 );
 
+/// Hold a step of the consent handshake for someone who is away. Without this, asking to
+/// connect while the other phone is asleep reaches nobody and is never retried — so neither
+/// side can ever accept the other.
+OutboxAdd outboxAddConsent({
+  required String outboxJson,
+  required String kind,
+  required String to,
+  required String toName,
+  String? note,
+  required PlatformInt64 sentAt,
+}) => RustLib.instance.api.crateApiOutboxAddConsent(
+  outboxJson: outboxJson,
+  kind: kind,
+  to: to,
+  toName: toName,
+  note: note,
+  sentAt: sentAt,
+);
+
 List<OutboxItem> outboxList({required String outboxJson}) =>
     RustLib.instance.api.crateApiOutboxList(outboxJson: outboxJson);
 
@@ -526,6 +545,9 @@ class OutboxAdd {
 
 class OutboxItem {
   final String ref;
+
+  /// "chat", "connect-request", "connect-accept" or "connect-deny".
+  final String kind;
   final String to;
   final String toName;
   final String text;
@@ -534,6 +556,7 @@ class OutboxItem {
 
   const OutboxItem({
     required this.ref,
+    required this.kind,
     required this.to,
     required this.toName,
     required this.text,
@@ -544,6 +567,7 @@ class OutboxItem {
   @override
   int get hashCode =>
       ref.hashCode ^
+      kind.hashCode ^
       to.hashCode ^
       toName.hashCode ^
       text.hashCode ^
@@ -556,6 +580,7 @@ class OutboxItem {
       other is OutboxItem &&
           runtimeType == other.runtimeType &&
           ref == other.ref &&
+          kind == other.kind &&
           to == other.to &&
           toName == other.toName &&
           text == other.text &&

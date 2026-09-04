@@ -66,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -773452736;
+  int get rustContentHash => -447031815;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -239,6 +239,15 @@ abstract class RustLibApi extends BaseApi {
     required String to,
     required String toName,
     required String text,
+    required PlatformInt64 sentAt,
+  });
+
+  OutboxAdd crateApiOutboxAddConsent({
+    required String outboxJson,
+    required String kind,
+    required String to,
+    required String toName,
+    String? note,
     required PlatformInt64 sentAt,
   });
 
@@ -1744,13 +1753,50 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  OutboxAdd crateApiOutboxAddConsent({
+    required String outboxJson,
+    required String kind,
+    required String to,
+    required String toName,
+    String? note,
+    required PlatformInt64 sentAt,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(outboxJson, serializer);
+          sse_encode_String(kind, serializer);
+          sse_encode_String(to, serializer);
+          sse_encode_String(toName, serializer);
+          sse_encode_opt_String(note, serializer);
+          sse_encode_i_64(sentAt, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 48)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_outbox_add,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiOutboxAddConsentConstMeta,
+        argValues: [outboxJson, kind, to, toName, note, sentAt],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOutboxAddConsentConstMeta => const TaskConstMeta(
+    debugName: "outbox_add_consent",
+    argNames: ["outboxJson", "kind", "to", "toName", "note", "sentAt"],
+  );
+
+  @override
   List<OutboxItem> crateApiOutboxList({required String outboxJson}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(outboxJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 48)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_outbox_item,
@@ -1777,7 +1823,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(outboxJson, serializer);
           sse_encode_String(ref, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 50)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1813,7 +1859,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 50,
+            funcId: 51,
             port: port_,
           );
         },
@@ -1858,7 +1904,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 51,
+            funcId: 52,
             port: port_,
           );
         },
@@ -2214,15 +2260,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   OutboxItem dco_decode_outbox_item(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return OutboxItem(
       ref: dco_decode_String(arr[0]),
-      to: dco_decode_String(arr[1]),
-      toName: dco_decode_String(arr[2]),
-      text: dco_decode_String(arr[3]),
-      sentAt: dco_decode_i_64(arr[4]),
-      attempts: dco_decode_u_32(arr[5]),
+      kind: dco_decode_String(arr[1]),
+      to: dco_decode_String(arr[2]),
+      toName: dco_decode_String(arr[3]),
+      text: dco_decode_String(arr[4]),
+      sentAt: dco_decode_i_64(arr[5]),
+      attempts: dco_decode_u_32(arr[6]),
     );
   }
 
@@ -2745,6 +2792,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   OutboxItem sse_decode_outbox_item(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_ref = sse_decode_String(deserializer);
+    var var_kind = sse_decode_String(deserializer);
     var var_to = sse_decode_String(deserializer);
     var var_toName = sse_decode_String(deserializer);
     var var_text = sse_decode_String(deserializer);
@@ -2752,6 +2800,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_attempts = sse_decode_u_32(deserializer);
     return OutboxItem(
       ref: var_ref,
+      kind: var_kind,
       to: var_to,
       toName: var_toName,
       text: var_text,
@@ -3272,6 +3321,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_outbox_item(OutboxItem self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.ref, serializer);
+    sse_encode_String(self.kind, serializer);
     sse_encode_String(self.to, serializer);
     sse_encode_String(self.toName, serializer);
     sse_encode_String(self.text, serializer);

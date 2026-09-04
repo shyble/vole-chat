@@ -10,6 +10,19 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
+/// What an entry is. Asking to connect waits the same way a message does — a request that
+/// vanished because the other side was asleep is one nobody can ever accept, which leaves the
+/// two of you unable to talk at all.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutboxKind {
+	#[default]
+	Chat,
+	ConnectRequest,
+	ConnectAccept,
+	ConnectDeny,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OutboxEntry {
 	pub r#ref: String,
@@ -21,6 +34,12 @@ pub struct OutboxEntry {
 	pub attempts: u32,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub last_error: Option<String>,
+	/// Absent on entries written before consent waited: chat.
+	#[serde(default)]
+	pub kind: OutboxKind,
+	/// The note on a connect request.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub note: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -43,6 +62,19 @@ impl Outbox {
 	}
 
 	pub fn add(&mut self, to: &str, to_name: &str, text: &str, sent_at: i64) -> OutboxEntry {
+		self.add_kind(OutboxKind::Chat, to, to_name, text, sent_at, None)
+	}
+
+	/// Hold anything that could not go out — a message, or a step of the consent handshake.
+	pub fn add_kind(
+		&mut self,
+		kind: OutboxKind,
+		to: &str,
+		to_name: &str,
+		text: &str,
+		sent_at: i64,
+		note: Option<String>,
+	) -> OutboxEntry {
 		let e = OutboxEntry {
 			r#ref: uuid::Uuid::new_v4().to_string(),
 			to: to.to_string(),
@@ -51,6 +83,8 @@ impl Outbox {
 			sent_at,
 			attempts: 0,
 			last_error: None,
+			kind,
+			note,
 		};
 		self.entries.push(e.clone());
 		e
@@ -110,7 +144,13 @@ impl Outbox {
 			if still_away.contains(&entry.to) || !connected.contains(&entry.to) {
 				continue;
 			}
-			match client.send_chat(&entry.to, &entry.text, Some(entry.sent_at)).await {
+			let verdict = match entry.kind {
+				OutboxKind::Chat => client.send_chat(&entry.to, &entry.text, Some(entry.sent_at)).await,
+				OutboxKind::ConnectRequest => client.request_connect(&entry.to, entry.note.as_deref()).await,
+				OutboxKind::ConnectAccept => client.approve(&entry.to).await,
+				OutboxKind::ConnectDeny => client.deny(&entry.to).await,
+			};
+			match verdict {
 				Verdict::Delivered | Verdict::Legacy => {
 					self.remove(&r);
 					results.push(Flushed::Delivered { r#ref: r, to: entry.to });

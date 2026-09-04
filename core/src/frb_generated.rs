@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -773452736;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -447031815;
 
 // Section: executor
 
@@ -2249,6 +2249,48 @@ fn wire__crate__api__outbox_add_impl(
         },
     )
 }
+fn wire__crate__api__outbox_add_consent_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "outbox_add_consent",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_outbox_json = <String>::sse_decode(&mut deserializer);
+            let api_kind = <String>::sse_decode(&mut deserializer);
+            let api_to = <String>::sse_decode(&mut deserializer);
+            let api_to_name = <String>::sse_decode(&mut deserializer);
+            let api_note = <Option<String>>::sse_decode(&mut deserializer);
+            let api_sent_at = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::outbox_add_consent(
+                    api_outbox_json,
+                    api_kind,
+                    api_to,
+                    api_to_name,
+                    api_note,
+                    api_sent_at,
+                ))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__outbox_list_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -2773,6 +2815,7 @@ impl SseDecode for crate::api::OutboxItem {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_ref = <String>::sse_decode(deserializer);
+        let mut var_kind = <String>::sse_decode(deserializer);
         let mut var_to = <String>::sse_decode(deserializer);
         let mut var_toName = <String>::sse_decode(deserializer);
         let mut var_text = <String>::sse_decode(deserializer);
@@ -2780,6 +2823,7 @@ impl SseDecode for crate::api::OutboxItem {
         let mut var_attempts = <u32>::sse_decode(deserializer);
         return crate::api::OutboxItem {
             r#ref: var_ref,
+            kind: var_kind,
             to: var_to,
             to_name: var_toName,
             text: var_text,
@@ -2996,8 +3040,8 @@ fn pde_ffi_dispatcher_primary_impl(
         44 => wire__crate__api__node_connect_impl(port, ptr, rust_vec_len, data_len),
         45 => wire__crate__api__node_info_impl(port, ptr, rust_vec_len, data_len),
         46 => wire__crate__api__node_pair_impl(port, ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__reachable_start_impl(port, ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__session_connect_impl(port, ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__reachable_start_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__session_connect_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3042,8 +3086,9 @@ fn pde_ffi_dispatcher_sync_impl(
         42 => wire__crate__api__key_string_parse_impl(ptr, rust_vec_len, data_len),
         43 => wire__crate__api__local_address_impl(ptr, rust_vec_len, data_len),
         47 => wire__crate__api__outbox_add_impl(ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__outbox_list_impl(ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__outbox_remove_impl(ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__outbox_add_consent_impl(ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__outbox_list_impl(ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__outbox_remove_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3262,6 +3307,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::OutboxItem {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.r#ref.into_into_dart().into_dart(),
+            self.kind.into_into_dart().into_dart(),
             self.to.into_into_dart().into_dart(),
             self.to_name.into_into_dart().into_dart(),
             self.text.into_into_dart().into_dart(),
@@ -3691,6 +3737,7 @@ impl SseEncode for crate::api::OutboxItem {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.r#ref, serializer);
+        <String>::sse_encode(self.kind, serializer);
         <String>::sse_encode(self.to, serializer);
         <String>::sse_encode(self.to_name, serializer);
         <String>::sse_encode(self.text, serializer);

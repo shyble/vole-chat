@@ -22,6 +22,7 @@ const PORTS_UNACCEPTED: (u16, u16) = (19967, 19968);
 const PORTS_DOUBLE: (u16, u16) = (19965, 19966);
 const PORTS_RECONNECT: (u16, u16) = (19963, 19964);
 const PORTS_FORGOTTEN: (u16, u16) = (19961, 19962);
+const PORTS_HELD_REQUEST: (u16, u16) = (19959, 19960);
 
 struct Hub {
 	child: Child,
@@ -294,6 +295,67 @@ async fn someone_the_hub_never_mentioned_can_still_be_written_to() {
 	let ev = wait_event(&mut rb, 20, |e| matches!(e, Event::Chat { .. })).await;
 	assert!(matches!(&ev, Event::Chat { text, .. } if text == "and again once you woke"), "{ev:?}");
 
+	ca.close().await;
+	cb.close().await;
+}
+
+/// Asking to connect while the other phone is asleep, and having it arrive when they wake.
+///
+/// This is the loop that left two phones unable to talk at all. The request came back Held —
+/// correct, the hub keeps nothing readable — and was then dropped, so nobody could ever accept
+/// it, so no message would ever be delivered either. It has to wait, exactly as a message does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_made_while_they_sleep_arrives_when_they_wake() {
+	use rust_lib_vole_chat::outbox::{Outbox, OutboxKind, DEFAULT_TTL_MS};
+
+	let tmp = tempfile::tempdir().unwrap();
+	let hub = Hub::spawn(tmp.path(), PORTS_HELD_REQUEST);
+	let a = Arc::new(Identity::generate("awake"));
+	let b = Arc::new(Identity::generate("asleep"));
+	HubClient::join(&hub.url, &a).await.expect("a joins");
+	HubClient::join(&hub.url, &b).await.expect("b joins");
+
+	// A scans B's code. B is not running at all.
+	let card_b = ContactCard::mine(&b, Some(&hub.url));
+	let (ca, _ra) = HubClient::connect(&hub.url, &hub.key, a.clone(), [], [card_b], []).await.expect("a");
+	assert_eq!(
+		ca.request_connect(b.instance_id(), Some("scanned your code")).await,
+		Verdict::Held,
+		"the hub keeps nothing readable, so it can only say it is holding"
+	);
+
+	// Held means it is ours to keep. Dropping it here is what broke everything.
+	let mut outbox = Outbox::new();
+	outbox.add_kind(
+		OutboxKind::ConnectRequest,
+		b.instance_id(),
+		"asleep",
+		"",
+		rust_lib_vole_chat::message::now_ms(),
+		Some("scanned your code".into()),
+	);
+	assert_eq!(outbox.len(), 1);
+	// Flushing while they are still asleep changes nothing.
+	assert!(outbox.flush(&ca, rust_lib_vole_chat::message::now_ms(), DEFAULT_TTL_MS).await.is_empty());
+	assert_eq!(outbox.len(), 1);
+
+	// B wakes.
+	let (cb, mut rb) = HubClient::connect(&hub.url, &hub.key, b.clone(), [], [], []).await.expect("b");
+	assert!(until_rostered(&ca, b.instance_id(), 30).await, "a is told they are here");
+
+	let done = outbox.flush(&ca, rust_lib_vole_chat::message::now_ms(), DEFAULT_TTL_MS).await;
+	assert!(
+		matches!(done.as_slice(), [rust_lib_vole_chat::outbox::Flushed::Delivered { .. }]),
+		"the request goes out now: {done:?}"
+	);
+	assert!(outbox.is_empty());
+
+	let ev = wait_event(&mut rb, 20, |e| matches!(e, Event::ConnectRequest { .. })).await;
+	assert!(
+		matches!(&ev, Event::ConnectRequest { from, note, .. }
+			if from == a.instance_id() && note.as_deref() == Some("scanned your code")),
+		"and it arrives with its note, so they can accept: {ev:?}"
+	);
 	ca.close().await;
 	cb.close().await;
 }

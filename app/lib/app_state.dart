@@ -169,6 +169,9 @@ class AppState extends ChangeNotifier {
   String? status;
   String? viewing;
   Timer? _reconnect;
+  /// Held requests and messages go out when the other side appears. A roster event is the usual
+  /// trigger, but two phones are rarely awake at the same moment, so also try on a timer.
+  Timer? _retry;
   /// Connecting and disconnecting run one after another, never at once. Two connects racing
   /// leaves two sockets from one identity, and a hub keeps only one per peer — so the session
   /// the app is holding can be the one that was dropped: connected, and told nothing.
@@ -183,10 +186,6 @@ class AppState extends ChangeNotifier {
   final Set<String> callerKeys = {};
   /// Cards we scanned, by instance id — their keys pinned by us, not vouched by a hub.
   final Map<String, String> cards = {};
-  /// People we want to connect with, waiting for the hub to say they exist. Asking before the
-  /// roster arrives reaches nobody: the session does not yet know the member, so the request
-  /// is refused locally and the other side never hears of it.
-  final Map<String, String?> _wantConnect = {};
   /// Members the hub has named, kept across sessions. A hub forgets a member 45 s after their
   /// screen locks, and writing to someone whose screen is off is exactly when a message needs
   /// holding — so what we were told before is what makes that possible.
@@ -348,6 +347,8 @@ class AppState extends ChangeNotifier {
       );
       _session = s;
       _events = s.events().listen(_onEvent, onError: (_) => _lost('event stream failed'));
+      _retry?.cancel();
+      _retry = Timer.periodic(const Duration(seconds: 20), (_) => unawaited(flushOutbox()));
     } catch (e) {
       status = 'Could not connect: ${_short(e)}';
       connected = false;
@@ -358,6 +359,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _disconnect() async {
     _reconnect?.cancel();
+    _retry?.cancel();
     await _events?.cancel();
     _events = null;
     final s = _session;
@@ -414,7 +416,6 @@ class AppState extends ChangeNotifier {
         _bump(from);
         notifyListeners();
       case rust.SessionEvent_ConnectAccepted(:final from, :final fromName):
-        _wantConnect.remove(from);
         _ensureContact(from, fromName);
         _append(from, Msg(id: 'acc-${_now()}', out: false, text: '$fromName accepted your request', ts: _now(), system: true));
         notifyListeners();
@@ -456,25 +457,7 @@ class AppState extends ChangeNotifier {
       unawaited(store.writeKnown(_known));
     }
     notifyListeners();
-    _flushWanted();
     unawaited(flushOutbox());
-  }
-
-  /// Send the connect requests we were holding for people the hub has now listed.
-  void _flushWanted() {
-    final s = _session;
-    if (s == null || !connected || _wantConnect.isEmpty) return;
-    final known = s.roster().map((m) => m.instanceId).toSet();
-    for (final id in _wantConnect.keys.toList()) {
-      if (!known.contains(id)) continue;
-      final note = _wantConnect.remove(id);
-      unawaited(() async {
-        final problem = await requestConnect(id, note: note);
-        final name = contacts[id]?.name ?? id;
-        status = problem == null ? 'Asked $name to connect' : 'Could not ask $name: $problem';
-        notifyListeners();
-      }());
-    }
   }
 
   void _onChat(String from, String fromName, String text, int sentAt, String id) {
@@ -538,15 +521,17 @@ class AppState extends ChangeNotifier {
       // a code we cannot pin is still a contact; it just relies on the hub's word
     }
     if (activeHub != null && _session == null) await connect();
-    // Ask as soon as the hub tells us they exist, not before.
+    // Just ask. The code carries their sealing keys, so this works even if no hub has ever
+    // described them; if they are away it is held and goes when they are back.
+    var asked = '';
     if (!consents.contains(card.instanceId)) {
-      _wantConnect[card.instanceId] = 'scanned your card';
-      _flushWanted();
+      final note = await requestConnect(card.instanceId, note: 'scanned your code');
+      asked = note == null ? ' Asked them to connect.' : ' $note.';
     }
     final where = joined ? ' You joined their hub, ${hubs.last.name}.' : '';
     return card.seals
-        ? '${card.name} added — their keys are pinned, so no hub can read or impersonate.$where'
-        : '${card.name} added from an identity-only code; sealing keys still come from the hub.$where';
+        ? '${card.name} added.$asked$where'
+        : '${card.name} added from an identity-only code; sealing keys still come from the hub.$asked$where';
   }
 
   Future<void> forgetCard(String instanceId) async {
@@ -873,16 +858,45 @@ class AppState extends ChangeNotifier {
   }
 
   Future<String?> requestConnect(String to, {String? note}) async {
-    final s = _session;
-    if (s == null) return 'Not connected';
     consents.add(to);
     await store.writeConsents(consents.toList());
-    final v = await s.requestConnect(to: to, note: note);
-    return switch (v) {
-      rust.SendVerdict_Refused(:final reason) => 'Not sent: $reason',
-      rust.SendVerdict_Held() => 'They are away — they will see it when they are back',
-      _ => null,
-    };
+    return _consent('connect-request', to, note: note);
+  }
+
+  /// Send a step of the consent handshake, or hold it. Holding is the whole point: you cannot
+  /// have both phones awake at once, so a request that is dropped when the other side is
+  /// asleep is one nobody can ever accept, and the two of you stay unable to talk.
+  Future<String?> _consent(String kind, String to, {String? note}) async {
+    final s = _session;
+    final name = contacts[to]?.name ?? to;
+    if (s != null && connected) {
+      final v = switch (kind) {
+        'connect-accept' => await s.approve(to: to),
+        'connect-deny' => await s.deny(to: to),
+        _ => await s.requestConnect(to: to, note: note),
+      };
+      switch (v) {
+        case rust.SendVerdict_Delivered() || rust.SendVerdict_Legacy():
+          return null;
+        case rust.SendVerdict_Refused(:final reason):
+          // Nothing to seal to yet — hold it, and it goes when the hub describes them.
+          if (!reason.contains('no such member')) return 'Not sent: $reason';
+        case rust.SendVerdict_Held():
+          break;
+      }
+    }
+    final r = rust.outboxAddConsent(
+      outboxJson: outboxJson,
+      kind: kind,
+      to: to,
+      toName: name,
+      note: note,
+      sentAt: _now(),
+    );
+    outboxJson = r.outboxJson;
+    await store.writeOutbox(outboxJson);
+    notifyListeners();
+    return '$name is away — this waits here and goes when they are back';
   }
 
   Future<void> approve(String id) async {
@@ -901,12 +915,7 @@ class AppState extends ChangeNotifier {
     consents.add(id);
     await store.writeConsents(consents.toList());
     _session?.accept(instanceId: id);
-    final v = await _session?.approve(to: id);
-    // Approving before the roster names them lands nowhere; hold it and send when it does.
-    if (v is rust.SendVerdict_Refused) {
-      _wantConnect[id] = null;
-      _flushWanted();
-    }
+    await _consent('connect-accept', id);
     notifyListeners();
   }
 
@@ -916,7 +925,7 @@ class AppState extends ChangeNotifier {
     if (contacts[id]?.isCaller == true) {
       _reachable?.deny(instanceId: id);
     } else {
-      await _session?.deny(to: id);
+      await _consent('connect-deny', id);
     }
     notifyListeners();
   }
@@ -931,7 +940,6 @@ class AppState extends ChangeNotifier {
     requests.remove(id);
     consents.remove(id);
     cards.remove(id);
-    _wantConnect.remove(id);
     callerKeys.removeWhere((k) {
       try {
         return rust.keyStringParse(keyString: k).instanceId == id;
@@ -1008,6 +1016,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _reconnect?.cancel();
+    _retry?.cancel();
     _nodeRetry?.cancel();
     _events?.cancel();
     _reachableEvents?.cancel();
