@@ -54,8 +54,9 @@ class ChatsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = state;
-    final ids = <String>{...s.contacts.keys, ...s.transcripts.keys}.toList();
-    int lastTs(String id) => s.transcripts[id]?.lastOrNull?.ts ?? 0;
+    // A brain thread belongs to the contact it hangs off, not to a row of its own.
+    final ids = <String>{...s.contacts.keys, ...s.transcripts.keys.where((k) => !k.endsWith('.brain'))}.toList();
+    int lastTs(String id) => s.transcripts[s.threadOf(id)]?.lastOrNull?.ts ?? 0;
     ids.sort((a, b) {
       final ra = s.requests.contains(a) ? 1 : 0, rb = s.requests.contains(b) ? 1 : 0;
       if (ra != rb) return rb - ra;
@@ -101,10 +102,11 @@ class _ContactTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = s.contacts[id];
     final name = c?.name.isNotEmpty == true ? c!.name : id.substring(0, 8);
-    final last = s.transcripts[id]?.lastOrNull;
+    final last = s.transcripts[s.threadOf(id)]?.lastOrNull;
     final unread = s.unread[id] ?? 0;
     final request = s.requests.contains(id);
     final held = s.transcripts[id]?.any((m) => m.held) ?? false;
+    final brain = s.brainMode.contains(id);
     final notice = s.pending[id];
     String subtitle;
     if (request) {
@@ -112,7 +114,7 @@ class _ContactTile extends StatelessWidget {
     } else if (notice != null) {
       subtitle = 'tried to reach you ${notice.count == 1 ? 'once' : '${notice.count} times'} while you were away';
     } else if (last != null) {
-      subtitle = (last.out ? 'You: ' : '') + last.text;
+      subtitle = '${brain ? 'Brain \u00b7 ' : ''}${last.out ? 'You: ' : ''}${last.text}';
     } else if (c?.isNode == true || c?.isCaller == true) {
       subtitle = c!.connected ? 'direct · online' : 'direct · offline';
     } else {

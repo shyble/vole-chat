@@ -749,8 +749,9 @@ class AppState extends ChangeNotifier {
         _onChat(from, fromName, text, sentAt, id);
       case rust.SessionEvent_BrainReply(:final taskId, :final text, :final failed):
         final peer = _asking.remove(taskId) ?? node.instanceId;
-        _append(peer, Msg(id: 'brain-$taskId', out: false, text: _brainText(text, failed), ts: _now(), system: failed));
-        if (viewing != peer) _bump(peer);
+        _append(brainThread(peer), Msg(id: 'brain-$taskId', out: false, text: _brainText(text, failed), ts: _now(), system: failed));
+        // Only the brain thread shows this, so seeing the person's thread is not seeing it.
+        if (viewing != peer || !brainMode.contains(peer)) _bump(peer);
         notifyListeners();
       default:
         break;
@@ -760,7 +761,7 @@ class AppState extends ChangeNotifier {
   void _nodeLost(Node node, String reason) {
     for (final task in _asking.entries.where((e) => e.value == node.instanceId).toList()) {
       _asking.remove(task.key);
-      _append(node.instanceId,
+      _append(brainThread(node.instanceId),
           Msg(id: 'brain-lost-${task.key}', out: false, text: 'The link dropped before an answer came back.', ts: _now(), system: true));
     }
     _nodeEvents.remove(node.instanceId)?.cancel();
@@ -826,7 +827,7 @@ class AppState extends ChangeNotifier {
   void _giveUpOn(String taskId) {
     final peer = _asking.remove(taskId);
     if (peer == null) return;
-    _append(peer,
+    _append(brainThread(peer),
         Msg(id: 'brain-gone-$taskId', out: false, text: 'No answer came back.', ts: _now(), system: true));
     notifyListeners();
   }
@@ -857,13 +858,19 @@ class AppState extends ChangeNotifier {
       try {
         final taskId = node.askBrain(text: text);
         _asking[taskId] = to;
-        _append(to, Msg(id: 'out-$ts', out: true, text: text, ts: ts));
+        _append(brainThread(to), Msg(id: 'out-$ts', out: true, text: text, ts: ts));
         notifyListeners();
         Timer(_brainPatience, () => _giveUpOn(taskId));
         return null;
       } catch (e) {
         return 'Could not ask: ${_short(e)}';
       }
+    }
+    // Switched to the brain with the link down. Holding this would deliver a question to the
+    // person instead, whenever the agent came back, so say so and let them choose.
+    if (node == null && brainMode.contains(to)) {
+      return 'Not connected to $to, so there is nothing to ask. Switch to Human to leave a message.'
+          .replaceFirst(to, contact?.name.isNotEmpty == true ? contact!.name : 'that agent');
     }
     if (node != null) {
       final v = node.sendChat(text: text, sentAt: ts);
@@ -1016,6 +1023,7 @@ class AppState extends ChangeNotifier {
   Future<void> removeContact(String id) async {
     final contact = contacts.remove(id);
     transcripts.remove(id);
+    transcripts.remove(brainThread(id));
     unread.remove(id);
     pending.remove(id);
     requests.remove(id);
@@ -1046,6 +1054,7 @@ class AppState extends ChangeNotifier {
     await Future.wait([
       store.writeContacts(contacts.values.map((c) => c.toJson()).toList()),
       store.deleteTranscript(id),
+      store.deleteTranscript(brainThread(id)),
       store.setUnread(unread),
       store.writePending(pending.values.map((n) => n.toJson()).toList()),
       store.writeRequests(requests.toList()),
@@ -1093,7 +1102,8 @@ class AppState extends ChangeNotifier {
       if (_nodeSessions.containsKey(c.instanceId)) {
         b.writeln('      brain: ${canAskBrain(c.instanceId) ? "askable" : "none announced"}'
             '  mode=${brainMode.contains(c.instanceId) ? "brain" : "human"}'
-            '  waiting=${brainPending(c.instanceId)}');
+            '  waiting=${brainPending(c.instanceId)}'
+            '  asked=${transcripts[brainThread(c.instanceId)]?.length ?? 0}');
       }
       final n = pending[c.instanceId];
       if (n != null) b.writeln('      notice: tried ${n.count}x, last ${when(n.last)}');
@@ -1123,7 +1133,12 @@ class AppState extends ChangeNotifier {
     viewing = null;
   }
 
-  List<Msg> messages(String id) => transcripts[id] ?? const [];
+  List<Msg> messages(String id) => transcripts[threadOf(id)] ?? const [];
+
+  /// Which conversation a chat is showing. The two modes reach different places — one the
+  /// person, one the agent's own session for you — so each keeps its own transcript.
+  String threadOf(String id) => brainMode.contains(id) ? brainThread(id) : id;
+  static String brainThread(String id) => '$id.brain';
 
   // ── helpers ──
 

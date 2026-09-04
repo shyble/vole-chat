@@ -54,7 +54,8 @@ class _ChatPageState extends State<ChatPage> {
         return Scaffold(
           appBar: AppBar(
             actions: [
-              if (s.canAskBrain(widget.peerId))
+              // Stays put when the link drops, so a chat left on Brain can be switched back.
+              if (s.canAskBrain(widget.peerId) || brain)
                 TextButton.icon(
                   onPressed: () => s.setBrainMode(widget.peerId, !brain),
                   icon: Icon(brain ? Icons.psychology : Icons.person_outline, size: 20),
@@ -92,7 +93,9 @@ class _ChatPageState extends State<ChatPage> {
                 Text(name),
                 Text(
                   brain
-                      ? 'asking the agent itself \u2014 answers take as long as it thinks'
+                      ? (s.canAskBrain(widget.peerId)
+                          ? 'asking the agent itself \u2014 answers take as long as it thinks'
+                          : 'asking the agent itself \u2014 offline, so there is nothing to ask')
                       : c?.isNode == true || c?.isCaller == true
                           ? (c!.connected ? 'direct \u00b7 ${c.sealed ? 'sealed end to end' : 'signed'}' : 'direct \u00b7 offline \u2014 held until it is back')
                           : (c?.connected == true ? 'online' : 'away \u2014 messages wait here until they are back'),
@@ -128,7 +131,7 @@ class _ChatPageState extends State<ChatPage> {
                 const LinearProgressIndicator(minHeight: 2),
               Expanded(
                 child: msgs.isEmpty
-                    ? const Center(child: Text('No messages yet.'))
+                    ? Center(child: Text(brain ? 'Nothing asked yet.' : 'No messages yet.'))
                     : ListView.builder(
                         controller: _scroll,
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
