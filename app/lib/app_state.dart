@@ -761,8 +761,15 @@ class AppState extends ChangeNotifier {
   void _nodeLost(Node node, String reason) {
     for (final task in _asking.entries.where((e) => e.value == node.instanceId).toList()) {
       _asking.remove(task.key);
-      _append(brainThread(node.instanceId),
-          Msg(id: 'brain-lost-${task.key}', out: false, text: 'The link dropped before an answer came back.', ts: _now(), system: true));
+      _append(
+          brainThread(node.instanceId),
+          Msg(
+            id: 'brain-lost-${task.key}',
+            out: false,
+            text: 'The link dropped. The agent keeps the answer and sends it when you reconnect.',
+            ts: _now(),
+            system: true,
+          ));
     }
     _nodeEvents.remove(node.instanceId)?.cancel();
     _nodeSessions.remove(node.instanceId);
@@ -820,15 +827,23 @@ class AppState extends ChangeNotifier {
   /// A question is out and the agent is still thinking about it.
   bool brainPending(String id) => _asking.containsValue(id);
 
-  /// How long to wait before saying an answer is not coming. An agent may take minutes over a
-  /// hard question; it should not leave the chat waiting all day over a lost one.
+  /// How long to keep showing that the agent is thinking. Past this the answer is still coming
+  /// — the agent holds what it could not deliver and sends it the next time we connect — so
+  /// this only stops the spinner, it gives up on nothing.
   static const _brainPatience = Duration(minutes: 10);
 
-  void _giveUpOn(String taskId) {
+  void _stopWaitingOn(String taskId) {
     final peer = _asking.remove(taskId);
     if (peer == null) return;
-    _append(brainThread(peer),
-        Msg(id: 'brain-gone-$taskId', out: false, text: 'No answer came back.', ts: _now(), system: true));
+    _append(
+        brainThread(peer),
+        Msg(
+          id: 'brain-slow-$taskId',
+          out: false,
+          text: 'Still thinking. The answer arrives when it is done, even if you close this.',
+          ts: _now(),
+          system: true,
+        ));
     notifyListeners();
   }
 
@@ -860,7 +875,7 @@ class AppState extends ChangeNotifier {
         _asking[taskId] = to;
         _append(brainThread(to), Msg(id: 'out-$ts', out: true, text: text, ts: ts));
         notifyListeners();
-        Timer(_brainPatience, () => _giveUpOn(taskId));
+        Timer(_brainPatience, () => _stopWaitingOn(taskId));
         return null;
       } catch (e) {
         return 'Could not ask: ${_short(e)}';
