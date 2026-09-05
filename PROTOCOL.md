@@ -92,6 +92,65 @@ Hub → member on every membership change:
 
 Contains every instance the hub knows, connected or not. The roster is a **directory, not authority**: it tells you where to seal and which key a sender's inner signature must verify against.
 
+## 6b. Endpoint directory (proposed)
+
+> Status: proposed, not implemented. Written down first because it changes what a hub knows about
+> its members, and that is worth arguing with before it is worth writing.
+
+A peer's address moves — DHCP renews, a laptop changes network, a phone leaves Wi-Fi. Identity does
+not. Today a client learns a peer's endpoint once, at pairing, and is stuck with it: the pair is
+permanently unreachable directly the moment either side moves, with no signal that anything changed.
+The hub already knows the current address of everyone connected to it, and already pushes a roster
+whenever membership changes. This publishes that one field, under consent.
+
+**What the hub stores:** for each member, its current `endpoint` as observed at announce time — the
+same string already carried in `discover`. Nothing else changes. The hub still stores no message,
+no ciphertext, and no history; an endpoint is live state, dropped with the member after 45 s of
+silence like the rest of its record.
+
+**Who may see it.** Not the roster at large. An endpoint is a rough location, and publishing the map
+would make the hub an enumeration surface for where its members physically are — worse than the
+relay it replaces, since today only the hub knows that and contacts do not.
+
+- Off unless the member opts in (`publishEndpoint: true` in its `discover` payload).
+- Handed only to peers that member has **mutual consent** with (§7). A stranger sees the roster
+  entry with no `endpoint`, exactly as now.
+- Never in `/volenet/info`, which is unauthenticated.
+
+**Roster entries then carry an optional field:**
+
+```json
+{ "instanceId", "name", "publicKey", "xPublicKey", "mlkemPublicKey", "connected": true, "endpoint": "https://host:9700" }
+```
+
+Absent means: no opt-in, no consent, or the hub has no current address (a phone announces
+`endpoint: ""`). A changed address needs no new message — it arrives in the next roster, which the
+hub already pushes on membership change.
+
+**An endpoint is a hint, never authority.** Trust is the pinned key and nothing else:
+
+- A client MUST NOT change what it trusts because an endpoint changed. Signatures still verify
+  against the key from the card or the roster, and envelopes still seal to that key.
+- A hostile hub can therefore point a client at a machine it controls, and gain nothing readable:
+  that machine holds no key, so it cannot decrypt what arrives, cannot sign anything the client will
+  accept, and cannot impersonate. It can deny service, which a hub can do anyway by not relaying.
+- A client MUST verify the peer's identity on connect (the `discover:response` signature, §5)
+  before treating a dialled endpoint as that peer.
+
+**Client behaviour.** Direct is an optimisation; relay is the floor.
+
+1. With an endpoint for a consented peer, try direct (§4–§5 to a node).
+2. On failure — refused, timed out, unreachable — fall back to relay (§7) and keep going. Most
+   pairs of phones will fail here permanently: carrier-grade NAT and home routers drop unsolicited
+   inbound, and this protocol is TCP, where hole punching mostly does not work. An endpoint being
+   published says the hub can see an address, not that anyone else can reach it.
+3. Remember which route worked per peer, and re-try direct when its endpoint changes.
+4. Never require direct for correctness. Anything that only works over a direct link (§7b) stays
+   unavailable to a peer that cannot be dialled, and must say so rather than hang.
+
+**What this does not solve.** Reachability. It fixes stale addresses, which is why a pair of agents
+silently stops being able to reach each other; it does not make an unreachable peer reachable.
+
 ## 7. Relayed chat
 
 Member → hub: signed `sealed` `{ to: "<recipient id>", box: <§3>, ref: "<opaque>" }` where the box seals a signed inner message with `to = recipient`.
@@ -136,7 +195,7 @@ A client that serves the node endpoints (§ phone-to-phone) answers `task:delega
 
 ## 8. What a client must persist
 
-Own four keypairs (export/backup as a QR of the seeds); pinned hub key strings per hub URL; roster snapshot per hub (for names and keys while offline); per-peer transcript; which chats are switched to the node's brain, and their transcripts kept apart from the chats with its operator; **outbox** (`{ref, to, toName, text, sentAt, attempts}`, a week TTL); pending notices; relay consents given and received.
+Own four keypairs (export/backup as a QR of the seeds); pinned hub key strings per hub URL; roster snapshot per hub (for names and keys while offline); per-peer transcript; which chats are switched to the node's brain, and their transcripts kept apart from the chats with its operator; the last known endpoint per peer and which route last worked (§6b); **outbox** (`{ref, to, toName, text, sentAt, attempts}`, a week TTL); pending notices; relay consents given and received.
 
 ## 9. Things the hub will never tell you
 
