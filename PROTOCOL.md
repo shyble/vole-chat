@@ -179,6 +179,99 @@ Hub → member on (re)connect: `relay:pending { senders: [ { from, fromName, cou
 
 Limits: sealed envelope ≤ 64 KiB as serialized JSON; 30 forwards per minute per sender→recipient pair.
 
+## 7c. Rooms (proposed)
+
+> Status: proposed, not implemented. Written first because it is the one feature that changes what
+> a hub holds about its members, and because the cheap version of it quietly gives up the property
+> the rest of this document is built on.
+
+Everything so far is one-to-one: an envelope is sealed to one recipient's static keys, and that is
+why a hub can carry it while reading nothing. A room is many-to-one-to-many, and the obvious
+implementation — one envelope under a shared room key — would end that. This is the version that
+does not.
+
+### The rule
+
+**A post is sealed once per member.** The sender fans out: for each member of the room it seals the
+same inner message to that member's keys (§3) and hands the hub one envelope per recipient, exactly
+as it would for that many private messages. The hub routes them. It learns who is in the room, who
+posted, when, and how big — the routing metadata it already sees — and nothing else.
+
+There is no room key. That is the whole point:
+
+- **Removing a member takes effect immediately and by construction.** You stop sealing to them, so
+  they cannot read what comes next. With a shared key you would have to rotate it, and a member
+  removed without rotation keeps reading — the problem that group-messaging protocols exist to
+  solve, and not one worth importing for rooms this size.
+- **A shared key would not even avoid the work.** The room key still has to be sealed to each
+  member, once per rotation. You keep the per-member sealing and add the rotation to it.
+- **Nothing new is trusted.** No new primitive, no new key material, no new place a secret can sit.
+
+The cost is bandwidth: N envelopes per post, each carrying the ML-KEM ciphertext (~1.2 KB) on top
+of the message. A short line to ten members is on the order of 15 KB. That is fine for a room and
+absurd for a broadcast channel, so:
+
+**A room has a member ceiling of 64.** Enforced by the hub at join, and stated here so it fails
+loudly at the size where the design stops making sense rather than quietly getting slow. A room
+that needs more members needs a different design, and should say so rather than degrade.
+
+### Messages
+
+Rooms are hub state, so every message goes to the hub signed and unsealed — the hub has to read it,
+and none of it is private. Only the *posts* are sealed, and those are ordinary §7 relay envelopes.
+
+| type | direction | payload |
+|---|---|---|
+| `room:create` | member → hub | `{ name, topic? }` → `room:info` or `room:error` |
+| `room:join` | member → hub | `{ room }` — subject to the room's policy and the ceiling |
+| `room:leave` | member → hub | `{ room }` |
+| `room:invite` | member → hub | `{ room, member }` — for a closed room |
+| `room:list` | member → hub | `{}` → `room:list:response` `{ rooms: [{ room, name, members, joined }] }` |
+| `room:info` | hub → member | `{ room, name, topic?, members: [ { instanceId, name, publicKey, xPublicKey, mlkemPublicKey } ] }` |
+| `room:members` | hub → member | pushed on every membership change, same shape as `room:info` |
+| `room:error` | hub → member | `{ room?, reason }` — `full`, `not-a-member`, `no-such-room`, `refused` |
+
+`room:info` and `room:members` carry the members' **keys**, not just their ids. A sender cannot fan
+out without them, and this is the same directory role the roster already plays (§6): the hub
+supplies keys it cannot alter undetected, because every inner message is signed by its author and
+verified against the key the roster gave.
+
+### Posting
+
+A post is not a new envelope type. For each member other than yourself, seal a `chat:message`
+inner (§7) with one extra field and send it as an ordinary `sealed` envelope:
+
+```json
+{ "text": "...", "fromName": "...", "sentAt": 0, "room": "<room id>" }
+```
+
+A recipient that sees `room` on an inner `chat:message` files it under that room instead of under a
+private conversation with the sender. A recipient that does not understand rooms shows it as a
+direct message from a person it has consented to — degraded, but not broken or silently dropped.
+
+Because posts are ordinary relayed chat, everything §7 already says applies unchanged: the hub
+answers `relay:ack` or `relay:error` per envelope with its own `ref`, a member who is away has
+their copy **held in the sender's outbox** and delivered when they return, and consent still gates
+whether a member accepts anything from that sender at all.
+
+That last point is a real consequence and not a bug: **a room does not create consent.** Joining a
+room with someone you have not accepted does not let them message you. Their posts are dropped like
+any other unconsented chat, and the room shows a gap. Clients should say so plainly rather than let
+it look like a delivery failure.
+
+### What a hub stores
+
+Membership, a name, an optional topic. No posts, no history, no ciphertext — a room changes nothing
+about §9. A room with no members for its TTL is forgotten.
+
+### What this does not do
+
+- **No history.** A member who joins sees what is posted from then on. There is nowhere for the
+  past to have been kept, by design.
+- **No ordering guarantee.** N envelopes are N deliveries; recipients order by the `sentAt` each
+  post carries, and two posts in the same millisecond may be seen differently by different members.
+- **No read state.** The hub does not know who has read what, and cannot.
+
 ## 7b. Asking a node's brain
 
 Over a **direct link only** (§4–§5 to a node, or the same inverted). A hub will not carry this: a relay accepts `chat:message`, `relay:connect-*` and `file:*`, and drops everything else, so executable traffic never travels through a third party.
@@ -195,7 +288,7 @@ A client that serves the node endpoints (§ phone-to-phone) answers `task:delega
 
 ## 8. What a client must persist
 
-Own four keypairs (export/backup as a QR of the seeds); pinned hub key strings per hub URL; roster snapshot per hub (for names and keys while offline); per-peer transcript; which chats are switched to the node's brain, and their transcripts kept apart from the chats with its operator; the last known endpoint per peer and which route last worked (§6b); **outbox** (`{ref, to, toName, text, sentAt, attempts}`, a week TTL); pending notices; relay consents given and received.
+Own four keypairs (export/backup as a QR of the seeds); pinned hub key strings per hub URL; roster snapshot per hub (for names and keys while offline); rooms joined and their member lists (§7c); per-peer transcript; which chats are switched to the node's brain, and their transcripts kept apart from the chats with its operator; the last known endpoint per peer and which route last worked (§6b); **outbox** (`{ref, to, toName, text, sentAt, attempts}`, a week TTL); pending notices; relay consents given and received.
 
 ## 9. Things the hub will never tell you
 
